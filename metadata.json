@@ -1,0 +1,6 @@
+{
+  "name": "Avant Neo 50W IoT Engine & Workstation Cockpit",
+  "description": "Suite modular de controle local de baixa latência para lâmpada inteligente Avant Neo 50W RGB/CCT (Tuya 3.5), com sincronização Ambilight, ritmo circadiano, API REST e exportador de software Windows 11.",
+  "requestFramePermissions": ["display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

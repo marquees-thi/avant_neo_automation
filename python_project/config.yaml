@@ -1,0 +1,26 @@
+# ==============================================================================
+# AVANT NEO 50W RGB/CCT - CONFIGURACAO DO CONTROLADOR IOT (WINDOWS 11)
+# ==============================================================================
+
+device:
+  id: "eb5e42ea6ec240ba55xays"
+  local_key: "<[(/yO6c[jZAdoWy"
+  ip: "192.168.200.136"
+  version: 3.5
+  socket_timeout: 2.0
+
+server:
+  host: "127.0.0.1"
+  port: 21420
+
+screen_sync:
+  target_fps: 20
+  saturation_boost: 1.35
+  smooth_factor: 0.25 # Fator LERP de suavizacao (0.01 a 1.0)
+
+hotkeys:
+  toggle_power: "ctrl+alt+l"
+  mode_reading: "ctrl+alt+r"
+  mode_ambilight: "ctrl+alt+a"
+  brightness_up: "ctrl+alt+up"
+  brightness_down: "ctrl+alt+down"
