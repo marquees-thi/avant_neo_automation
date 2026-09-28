@@ -20,7 +20,7 @@ screen_sync:
 
 hotkeys:
   toggle_power: "ctrl+alt+l"
-  mode_reading: "ctrl+alt+r"
+  mode_reading: "ctrl+shift+r" # Utiliza Shift em vez de Alt para evitar conflito com AMD Radeon Software
   mode_ambilight: "ctrl+alt+a"
   brightness_up: "ctrl+alt+up"
   brightness_down: "ctrl+alt+down"

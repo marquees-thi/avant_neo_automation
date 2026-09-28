@@ -34,7 +34,7 @@ screen_sync:
 
 hotkeys:
   toggle_power: "ctrl+alt+l"
-  mode_reading: "ctrl+alt+r"
+  mode_reading: "ctrl+shift+r" # Atualizado para evitar conflito com driver AMD Radeon Software
   mode_ambilight: "ctrl+alt+a"
   brightness_up: "ctrl+alt+up"
   brightness_down: "ctrl+alt+down"
@@ -135,7 +135,7 @@ def main():
         tray_app.stop()
         sys.exit(0)
 
-    # 4. Servidor Local HTTP API (FastAPI + Uvicorn)
+    # 4. Servidor Local HTTP API e Cockpit Web (FastAPI + Uvicorn)
     api_server = APIServer(
         host=config.server.host,
         port=config.server.port,
@@ -158,10 +158,10 @@ def main():
     # Atualiza icone com estado inicial da lampada
     tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
 
-    # 6. Atalhos Globais de Teclado (Win32 nativo)
+    # 6. Atalhos Globais de Teclado (Win32 nativo com fallback)
     hotkeys = GlobalHotkeys()
     hotkeys.register(config.hotkeys.get("toggle_power", "ctrl+alt+l"), handle_toggle)
-    hotkeys.register(config.hotkeys.get("mode_reading", "ctrl+alt+r"), handle_reading_mode)
+    hotkeys.register(config.hotkeys.get("mode_reading", "ctrl+shift+r"), handle_reading_mode)
     hotkeys.register(config.hotkeys.get("mode_ambilight", "ctrl+alt+a"), handle_start_ambilight)
     hotkeys.register(
         config.hotkeys.get("brightness_up", "ctrl+alt+up"),
@@ -252,16 +252,12 @@ class BulbState:
     def __init__(self):
         self.is_on: bool = False
         self.mode: str = "white"
-        self.brightness: int = 100  # 0 a 100%
-        self.color_temp: int = 100  # 0 (quente 2700K) a 100 (frio 6500K)
+        self.brightness: int = 100
+        self.color_temp: int = 100
         self.rgb: Tuple[int, int, int] = (255, 255, 255)
         self.last_seen: float = 0.0
 
 class BulbController:
-    """
-    Driver resiliente para lampada inteligente Avant Neo 50W (protocolo Tuya 3.5).
-    Usa fila de comandos com thread dedicada para evitar bloqueios de socket na UI.
-    """
     def __init__(self, config: AppConfig):
         self.config = config
         self.state = BulbState()
@@ -506,7 +502,7 @@ class SceneEngine:
     path: 'core/hotkeys.py',
     name: 'hotkeys.py',
     category: 'core',
-    description: 'Atalhos globais de teclado usando a API nativa Win32 (RegisterHotKey)',
+    description: 'Atalhos globais de teclado usando a API nativa Win32 com fallback inteligente',
     content: `import ctypes
 from ctypes import wintypes
 import threading
@@ -516,6 +512,7 @@ from typing import Dict, Callable, Tuple
 logger = logging.getLogger("Win32Hotkeys")
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
@@ -523,18 +520,24 @@ MOD_SHIFT = 0x0004
 MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 
+ERROR_HOTKEY_ALREADY_REGISTERED = 1409
+
 VK_MAP = {
     "l": 0x4C,
     "r": 0x52,
     "a": 0x41,
     "c": 0x43,
+    "w": 0x57,
     "up": 0x26,
     "down": 0x28,
+    "left": 0x25,
+    "right": 0x27,
+    "space": 0x20,
 }
 
 class GlobalHotkeys:
     def __init__(self):
-        self._handlers: Dict[int, Tuple[int, int, Callable]] = {}
+        self._handlers: Dict[int, Tuple[int, int, Callable, str]] = {}
         self._thread: threading.Thread = None
         self._running = False
 
@@ -563,7 +566,7 @@ class GlobalHotkeys:
     def register(self, hotkey_str: str, callback: Callable):
         modifiers, vk = self._parse_hotkey(hotkey_str)
         hotkey_id = len(self._handlers) + 1
-        self._handlers[hotkey_id] = (modifiers, vk, callback)
+        self._handlers[hotkey_id] = (modifiers, vk, callback, hotkey_str)
 
     def start(self):
         self._running = True
@@ -572,25 +575,41 @@ class GlobalHotkeys:
 
     def _msg_loop(self):
         registered_ids = []
-        for hid, (mods, vk, cb) in self._handlers.items():
-            if user32.RegisterHotKey(None, hid, mods, vk):
+        for hid, (mods, vk, cb, hotkey_str) in self._handlers.items():
+            success = user32.RegisterHotKey(None, hid, mods, vk)
+            if success:
                 registered_ids.append(hid)
+                logger.info(f"Atalho registrado: '{hotkey_str}' (ID {hid})")
             else:
-                logger.error(f"Falha ao registrar hotkey ID {hid} ({vk})")
+                err = kernel32.GetLastError()
+                if err == ERROR_HOTKEY_ALREADY_REGISTERED:
+                    logger.warning(
+                        f"Atalho '{hotkey_str}' (ID {hid}) já está em uso por outro aplicativo no Windows "
+                        f"(ex: AMD Radeon Software Adrenalin / NVIDIA / Game Bar)."
+                    )
+                    fallback_mods = (mods & ~MOD_ALT) | MOD_SHIFT if (mods & MOD_ALT) else (mods | MOD_ALT)
+                    fallback_name = hotkey_str.replace("alt", "shift") if "alt" in hotkey_str else hotkey_str + "+alt"
+                    if user32.RegisterHotKey(None, hid, fallback_mods, vk):
+                        registered_ids.append(hid)
+                        logger.info(f"Atalho alternativo registrado com sucesso: '{fallback_name}' (ID {hid})")
+                    else:
+                        logger.warning(f"Não foi possível registrar atalho '{hotkey_str}'. Altere o mapeamento no config.yaml.")
+                else:
+                    logger.error(f"Falha ao registrar hotkey ID {hid} ({hotkey_str}), Win32 Error: {err}")
 
         msg = wintypes.MSG()
         while self._running:
             res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
             if res <= 0:
                 break
-            if msg.message == 0x0312:  # WM_HOTKEY
+            if msg.message == 0x0312:
                 hid = msg.wParam
                 if hid in self._handlers:
-                    _, _, cb = self._handlers[hid]
+                    _, _, cb, _ = self._handlers[hid]
                     try:
                         cb()
                     except Exception as e:
-                        logger.error(f"Erro executando callback do atalho: {e}")
+                        logger.error(f"Erro executando callback do atalho ID {hid}: {e}")
 
         for hid in registered_ids:
             user32.UnregisterHotKey(None, hid)
@@ -723,11 +742,13 @@ class ScreenSyncEngine:
     path: 'modules/api_server.py',
     name: 'api_server.py',
     category: 'modules',
-    description: 'Servidor local FastAPI + Uvicorn na porta 21420',
+    description: 'Servidor local FastAPI + Uvicorn com Cockpit Web integrado em http://127.0.0.1:21420',
     content: `import logging
 import threading
+import json
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from core.controller import BulbController
@@ -750,6 +771,146 @@ class WhiteRequest(BaseModel):
 class SceneRequest(BaseModel):
     scene: str
 
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Avant Neo 50W · Cockpit Local</title>
+  <style>
+    :root { --bg: #0a0a0a; --card-bg: #141414; --border: #262626; --text: #ededed; --muted: #a1a1a1; --accent: #f59e0b; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 20px; display: flex; justify-content: center; }
+    .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; }
+    .badge { font-size: 0.75rem; background: #222; color: #10b981; border: 1px solid #059669; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
+    .btn-power { background: #262626; border: 1px solid #404040; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .btn-power.on { background: rgba(245, 158, 11, 0.2); border-color: #f59e0b; color: #fbbf24; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    @media(min-width: 768px) { .grid { grid-template-columns: 320px 1fr; } }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .visualizer { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; border-radius: 10px; background: #0c0c0c; border: 1px solid #1f1f1f; }
+    .bulb-glow { width: 110px; height: 110px; border-radius: 50%; transition: all 0.3s; border: 2px solid #333; }
+    .slider-group { display: flex; flex-direction: column; gap: 6px; }
+    .slider-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+    input[type=range] { width: 100%; height: 6px; border-radius: 4px; background: #262626; outline: none; appearance: none; cursor: pointer; accent-color: var(--accent); }
+    .cct-slider { background: linear-gradient(to right, #ff9e22 0%, #ffdf9e 40%, #ffffff 70%, #d4e8ff 100%) !important; }
+    .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .btn-preset { background: #1a1a1a; border: 1px solid #2a2a2a; color: #ccc; padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 500; cursor: pointer; text-align: center; }
+    .btn-preset:hover { background: #262626; color: #fff; }
+    .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .swatch { height: 34px; border-radius: 6px; cursor: pointer; }
+    .scenes-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .btn-scene { background: #171717; border: 1px solid #262626; color: #ddd; padding: 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; text-align: left; }
+    .btn-scene.active { background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; color: #fbbf24; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="brand">Avant Neo 50W</span>
+        <span class="badge">Tuya 3.5 :6668</span>
+      </div>
+      <button id="pwrBtn" class="btn-power" onclick="togglePower()">Carregando...</button>
+    </header>
+    <div class="grid">
+      <div class="card">
+        <div class="visualizer"><div id="bulbGlow" class="bulb-glow"></div></div>
+        <div class="slider-group">
+          <div class="slider-label"><span>Brilho</span><span id="txtBrightness">100%</span></div>
+          <input type="range" id="rngBrightness" min="1" max="100" value="100" onchange="sendWhite()">
+        </div>
+        <div class="slider-group">
+          <div class="slider-label"><span>Temperatura CCT</span><span id="txtTemp">4600K</span></div>
+          <input type="range" id="rngTemp" class="cct-slider" min="0" max="100" value="50" onchange="sendWhite()">
+        </div>
+        <div class="btn-grid">
+          <button class="btn-preset" onclick="setPreset(100, 0)">2700K Relax</button>
+          <button class="btn-preset" onclick="setPreset(100, 50)">4000K Leitura</button>
+          <button class="btn-preset" onclick="setPreset(100, 100)">6500K Foco</button>
+          <button class="btn-preset" onclick="setPreset(15, 0)">Noturno</button>
+        </div>
+      </div>
+      <div class="card">
+        <div style="font-size:0.85rem; font-weight:600; color:#fff;">CORES RGB RÁPIDAS</div>
+        <div class="swatches">
+          <div class="swatch" style="background:#00ffff;" onclick="sendRgb(0,255,255)"></div>
+          <div class="swatch" style="background:#ff0096;" onclick="sendRgb(255,0,150)"></div>
+          <div class="swatch" style="background:#ff8c14;" onclick="sendRgb(255,140,20)"></div>
+          <div class="swatch" style="background:#a855f7;" onclick="sendRgb(168,85,247)"></div>
+          <div class="swatch" style="background:#2563eb;" onclick="sendRgb(37,99,235)"></div>
+          <div class="swatch" style="background:#22c55e;" onclick="sendRgb(34,197,94)"></div>
+        </div>
+        <div style="font-size:0.85rem; font-weight:600; color:#fff; margin-top:10px;">EFEITOS EM BACKGROUND</div>
+        <div class="scenes-grid">
+          <button id="btnAmbilight" class="btn-scene" onclick="toggleScene('ambilight')">Ambilight (Tela)</button>
+          <button id="btnCircadian" class="btn-scene" onclick="toggleScene('circadian')">Ritmo Circadiano</button>
+          <button id="btnCandle" class="btn-scene" onclick="toggleScene('candle')">Vela / Lareira</button>
+          <button id="btnCyberpunk" class="btn-scene" onclick="toggleScene('cyberpunk')">Cyberpunk</button>
+        </div>
+        <button class="btn-preset" style="width:100%; margin-top:auto;" onclick="stopScenes()">Pausar Efeitos Dinâmicos</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    let curState = null;
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const d = await res.json();
+        curState = d;
+        document.getElementById('pwrBtn').innerText = d.power ? 'Ligada' : 'Desligada';
+        document.getElementById('pwrBtn').className = 'btn-power ' + (d.power ? 'on' : '');
+        const g = document.getElementById('bulbGlow');
+        g.style.backgroundColor = d.power ? 'rgb(' + d.rgb.join(',') + ')' : '#222';
+        g.style.boxShadow = d.power ? '0 0 ' + (d.brightness * 0.7) + 'px rgba(' + d.rgb.join(',') + ', 0.8)' : 'none';
+        document.getElementById('rngBrightness').value = d.brightness;
+        document.getElementById('txtBrightness').innerText = d.brightness + '%';
+        document.getElementById('rngTemp').value = d.color_temp;
+        document.getElementById('txtTemp').innerText = Math.round(2700 + (d.color_temp / 100) * 3800) + 'K';
+        ['ambilight','circadian','candle','cyberpunk'].forEach(sc => {
+          const b = document.getElementById('btn' + sc.charAt(0).toUpperCase() + sc.slice(1));
+          if (b) (d.active_scene === sc || (sc==='ambilight'&&d.ambilight_running)) ? b.classList.add('active') : b.classList.remove('active');
+        });
+      } catch (e) {}
+    }
+    async function togglePower() { await fetch('/api/power/toggle', {method:'POST'}); fetchStatus(); }
+    async function sendWhite() {
+      const b = parseInt(document.getElementById('rngBrightness').value);
+      const t = parseInt(document.getElementById('rngTemp').value);
+      await fetch('/api/color/white', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({brightness:b, color_temp:t})});
+      fetchStatus();
+    }
+    async function setPreset(b, t) { document.getElementById('rngBrightness').value = b; document.getElementById('rngTemp').value = t; await sendWhite(); }
+    async function sendRgb(r,g,b) { await fetch('/api/color/rgb', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({r,g,b})}); fetchStatus(); }
+    async function toggleScene(s) {
+      if (curState && (curState.active_scene === s || (s==='ambilight'&&curState.ambilight_running))) { await stopScenes(); }
+      else { await fetch('/api/scene/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({scene:s})}); }
+      fetchStatus();
+    }
+    async function stopScenes() { await fetch('/api/scene/stop', {method:'POST'}); fetchStatus(); }
+    fetchStatus(); setInterval(fetchStatus, 1500);
+  </script>
+</body>
+</html>
+"""
+
+async def parse_flexible_json(request: Request) -> dict:
+    body_bytes = await request.body()
+    if not body_bytes:
+        return {}
+    text = body_bytes.decode("utf-8", errors="replace").strip()
+    if '\\"' in text:
+        text = text.replace('\\"', '"')
+    try:
+        return json.loads(text)
+    except Exception as e:
+        logger.warning(f"Erro ao decodificar JSON bruto: {e}, payload: {text}")
+        raise HTTPException(status_code=400, detail=f"JSON invalido: {text}")
+
 class APIServer:
     def __init__(
         self,
@@ -765,10 +926,17 @@ class APIServer:
         self.scenes = scenes
         self.ambilight = ambilight
         self._server_thread: Optional[threading.Thread] = None
-
         self._setup_routes()
 
     def _setup_routes(self):
+        @app.get("/", response_class=HTMLResponse)
+        def serve_dashboard():
+            return HTMLResponse(content=DASHBOARD_HTML)
+
+        @app.get("/dashboard", response_class=HTMLResponse)
+        def serve_dashboard_alias():
+            return HTMLResponse(content=DASHBOARD_HTML)
+
         @app.get("/api/status")
         def get_status():
             return {
@@ -776,7 +944,7 @@ class APIServer:
                 "mode": self.controller.state.mode,
                 "brightness": self.controller.state.brightness,
                 "color_temp": self.controller.state.color_temp,
-                "rgb": self.controller.state.rgb,
+                "rgb": list(self.controller.state.rgb),
                 "active_scene": self.scenes.current_scene,
                 "ambilight_running": self.ambilight.is_running()
             }
@@ -788,25 +956,36 @@ class APIServer:
             return {"status": "ok", "power": self.controller.state.is_on}
 
         @app.post("/api/color/rgb")
-        def set_rgb(payload: ColorRGBRequest):
+        async def set_rgb(request: Request):
+            data = await parse_flexible_json(request)
+            if "r" not in data or "g" not in data or "b" not in data:
+                raise HTTPException(status_code=400, detail="Campos r, g, b obrigatorios (0 a 255)")
+            r, g, b = int(data["r"]), int(data["g"]), int(data["b"])
             self._disable_dynamic_modes()
-            self.controller.set_rgb(payload.r, payload.g, payload.b)
-            return {"status": "ok", "rgb": [payload.r, payload.g, payload.b]}
+            self.controller.set_rgb(r, g, b)
+            return {"status": "ok", "rgb": [r, g, b]}
 
         @app.post("/api/color/white")
-        def set_white(payload: WhiteRequest):
+        async def set_white(request: Request):
+            data = await parse_flexible_json(request)
+            if "brightness" not in data or "color_temp" not in data:
+                raise HTTPException(status_code=400, detail="Campos brightness e color_temp obrigatorios")
+            b = int(data["brightness"])
+            t = int(data["color_temp"])
             self._disable_dynamic_modes()
-            self.controller.set_white(payload.brightness, payload.color_temp)
-            return {"status": "ok", "brightness": payload.brightness, "color_temp": payload.color_temp}
+            self.controller.set_white(b, t)
+            return {"status": "ok", "brightness": b, "color_temp": t}
 
         @app.post("/api/scene/start")
-        def start_scene(payload: SceneRequest):
-            scene_name = payload.scene.lower()
+        async def start_scene(request: Request):
+            data = await parse_flexible_json(request)
+            if "scene" not in data:
+                raise HTTPException(status_code=400, detail="Campo 'scene' obrigatorio")
+            scene_name = str(data["scene"]).lower()
             if scene_name == "ambilight":
                 self.scenes.stop_active_scene()
                 self.ambilight.start()
                 return {"status": "ok", "mode": "ambilight"}
-            
             try:
                 self.ambilight.stop()
                 self.scenes.start_scene(scene_name)
@@ -834,25 +1013,21 @@ class APIServer:
             access_log=False
         )
         server = uvicorn.Server(server_config)
-
-        self._server_thread = threading.Thread(
-            target=server.run,
-            daemon=True,
-            name="UvicornWorker"
-        )
+        self._server_thread = threading.Thread(target=server.run, daemon=True, name="UvicornWorker")
         self._server_thread.start()
-        logger.info(f"API REST operacional em http://{self.host}:{self.port}")
+        logger.info(f"API REST operacional e Painel Web disponivel em http://{self.host}:{self.port}")
 `
   },
   {
     path: 'ui/tray.py',
     name: 'tray.py',
     category: 'ui',
-    description: 'Interface de bandeja no Windows 11 com ícone Pillow dinâmico',
+    description: 'Interface de bandeja no Windows 11 com atalho para abrir painel no navegador',
     content: `import pystray
 from PIL import Image, ImageDraw
 import logging
-from typing import Callable
+import webbrowser
+from typing import Callable, Optional
 
 logger = logging.getLogger("TrayUI")
 
@@ -874,7 +1049,7 @@ class SystemTrayApp:
         self.on_quit = on_quit
 
         self.icon = pystray.Icon("avant_iot_bulb")
-        self.icon.title = "Avant Neo 50W IoT"
+        self.icon.title = "Avant Neo 50W IoT · Workstation Control"
         self.icon.icon = self._create_icon((120, 120, 120))
         self.icon.menu = self._build_menu()
 
@@ -888,19 +1063,26 @@ class SystemTrayApp:
 
     def update_icon_color(self, is_on: bool, rgb: tuple = (255, 255, 255)):
         if not is_on:
-            self.icon.icon = self._create_icon((40, 40, 40))
+            self.icon.icon = self._create_icon((45, 45, 45))
         else:
             self.icon.icon = self._create_icon(rgb)
 
+    def _open_web_dashboard(self):
+        try:
+            webbrowser.open("http://127.0.0.1:21420")
+        except Exception as e:
+            logger.error(f"Erro ao abrir navegador: {e}")
+
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
+            pystray.MenuItem("Abrir Cockpit no Navegador", self._open_web_dashboard, default=True),
             pystray.MenuItem("Ligar / Desligar Lâmpada", lambda: self.on_toggle_power()),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Cenas e Efeitos", pystray.Menu(
+            pystray.MenuItem("Efeitos & Dinâmicas", pystray.Menu(
                 pystray.MenuItem("Ambilight (Sincronizar Tela)", lambda: self.on_start_ambilight()),
-                pystray.MenuItem("Ritmo Circadiano", lambda: self.on_start_scene("circadian")),
-                pystray.MenuItem("Vela (Candlelight)", lambda: self.on_start_scene("candle")),
-                pystray.MenuItem("Cyberpunk Neon", lambda: self.on_start_scene("cyberpunk")),
+                pystray.MenuItem("Ritmo Circadiano Automático", lambda: self.on_start_scene("circadian")),
+                pystray.MenuItem("Vela (Candlelight Flame)", lambda: self.on_start_scene("candle")),
+                pystray.MenuItem("Cyberpunk Neon Pulse", lambda: self.on_start_scene("cyberpunk")),
             )),
             pystray.MenuItem("Presets Rápidos", pystray.Menu(
                 pystray.MenuItem("Modo Leitura (4000K, 100%)", lambda: self.on_set_reading()),
@@ -909,10 +1091,11 @@ class SystemTrayApp:
                 pystray.MenuItem("Branco Frio (6500K)", lambda: self.on_brightness_change(100, 100)),
             )),
             pystray.MenuItem("Ajuste de Brilho", pystray.Menu(
-                pystray.MenuItem("100%", lambda: self.on_brightness_change(100, None)),
+                pystray.MenuItem("100% (Brilho Máximo)", lambda: self.on_brightness_change(100, None)),
                 pystray.MenuItem("75%", lambda: self.on_brightness_change(75, None)),
                 pystray.MenuItem("50%", lambda: self.on_brightness_change(50, None)),
                 pystray.MenuItem("25%", lambda: self.on_brightness_change(25, None)),
+                pystray.MenuItem("10% (Noturno)", lambda: self.on_brightness_change(10, None)),
             )),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Encerrar Aplicação", lambda: self.on_quit())
@@ -977,7 +1160,7 @@ pause
     path: 'test_api.bat',
     name: 'test_api.bat',
     category: 'scripts',
-    description: 'Script de teste rápido dos endpoints cURL da API REST local',
+    description: 'Script de teste rápido dos endpoints cURL da API REST local (corrigido para Windows CMD)',
     content: `@echo off
 title Teste Rapido da API REST Local - Avant Neo 50W (Porta 21420)
 echo ==============================================================================
@@ -996,21 +1179,71 @@ echo.
 echo.
 
 echo 3. Definindo Cor Cyberpunk Neon (Ciano 0, 255, 255):
-curl -s -X POST http://127.0.0.1:21420/api/color/rgb -H "Content-Type: application/json" -d "{\"r\":0,\"g\":255,\"b\":255}"
+echo {"r":0,"g":255,"b":255} | curl -s -X POST http://127.0.0.1:21420/api/color/rgb -H "Content-Type: application/json" -d @-
 echo.
 echo.
 
 echo 4. Definindo Branco Modo Leitura (Brilho 100%%, Temperatura 50%%):
-curl -s -X POST http://127.0.0.1:21420/api/color/white -H "Content-Type: application/json" -d "{\"brightness\":100,\"color_temp\":50}"
+echo {"brightness":100,"color_temp":50} | curl -s -X POST http://127.0.0.1:21420/api/color/white -H "Content-Type: application/json" -d @-
 echo.
 echo.
 
 echo 5. Iniciando Modo Ambilight:
-curl -s -X POST http://127.0.0.1:21420/api/scene/start -H "Content-Type: application/json" -d "{\"scene\":\"ambilight\"}"
+echo {"scene":"ambilight"} | curl -s -X POST http://127.0.0.1:21420/api/scene/start -H "Content-Type: application/json" -d @-
 echo.
 echo.
 
+echo 6. Testando se o Site Web Cockpit esta respondendo:
+curl -s -I http://127.0.0.1:21420 | findstr "200"
+echo.
+echo [SUCESSO] Voce pode abrir http://127.0.0.1:21420 no seu navegador!
+echo.
+
 pause
+`
+  },
+  {
+    path: 'test_api.ps1',
+    name: 'test_api.ps1',
+    category: 'scripts',
+    description: 'Script PowerShell nativo para testar os endpoints da API REST',
+    content: `# ==============================================================================
+# Teste de API REST Local - Avant Neo 50W IoT (PowerShell)
+# Executa chamadas nativas sem dependencia de curl ou problemas de aspas
+# ==============================================================================
+
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "Testando API REST Local (http://127.0.0.1:21420)..." -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Cyan
+
+Write-Host ""
+Write-Host "1. Status Geral:" -ForegroundColor Yellow
+$status = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/status" -Method Get
+$status | Format-List
+
+Write-Host "2. Alternando Alimentacao (Toggle):" -ForegroundColor Yellow
+$toggle = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/power/toggle" -Method Post
+$toggle | Format-List
+
+Write-Host "3. Definindo Cor Cyberpunk Neon (Ciano):" -ForegroundColor Yellow
+$rgbBody = @{ r = 0; g = 255; b = 255 } | ConvertTo-Json
+$rgb = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/color/rgb" -Method Post -ContentType "application/json" -Body $rgbBody
+$rgb | Format-List
+
+Write-Host "4. Definindo Branco Modo Leitura:" -ForegroundColor Yellow
+$whiteBody = @{ brightness = 100; color_temp = 50 } | ConvertTo-Json
+$white = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/color/white" -Method Post -ContentType "application/json" -Body $whiteBody
+$white | Format-List
+
+Write-Host "5. Iniciando Modo Ambilight:" -ForegroundColor Yellow
+$sceneBody = @{ scene = "ambilight" } | ConvertTo-Json
+$scene = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/scene/start" -Method Post -ContentType "application/json" -Body $sceneBody
+$scene | Format-List
+
+Write-Host ""
+Write-Host "[SUCESSO] Todos os testes foram executados com sucesso!" -ForegroundColor Green
+Write-Host "Abrindo Painel Web no navegador: http://127.0.0.1:21420 ..." -ForegroundColor Cyan
+Start-Process "http://127.0.0.1:21420"
 `
   },
   {
@@ -1020,19 +1253,18 @@ pause
     description: 'Manual completo de instalação, atalhos e protocolo Tuya 3.5',
     content: `# Avant Neo 50W RGB/CCT IoT Automation Suite (Windows 11)
 
-Software modular de baixa latência em Python 3.10+ para controle de alta performance da lâmpada inteligente Avant Neo 50W (base Tuya 3.5), executando em segundo plano na bandeja do sistema do Windows 11 com suporte a sincronização de tela Ambilight, efeitos dinâmicos, atalhos globais Win32 e API REST local.
+Software modular de baixa latência em Python 3.10+ para controle de alta performance da lâmpada inteligente Avant Neo 50W (base Tuya 3.5), executando em segundo plano na bandeja do sistema do Windows 11 com suporte a sincronização de tela Ambilight, efeitos dinâmicos, atalhos globais Win32, Painel Web local em http://127.0.0.1:21420 e API REST.
 
 ---
 
 ## 1. Características Técnicas
 
+- **Painel Web Local Integrado:** Acesse http://127.0.0.1:21420 no navegador para controlar o brilho, temperatura CCT, cores RGB e cenas dinâmicas.
 - **Driver Desacoplado:** Fila de comandos \`queue.Queue\` em thread dedicada. Chamadas de rede TCP da \`tinytuya\` nunca travam a UI, Ambilight ou atalhos.
 - **Protocolo Tuya 3.5 Validado:** Comunicação direta na porta TCP \`6668\` usando \`socketPersistent(False)\` e timeout de 2.0s para evitar travamentos de socket.
 - **Ambilight de Baixa Latência:** Captura do display primário via \`mss\` (C-native) com saturação reforçada no espaço HSV e interpolação linear (LERP) a 20 FPS.
-- **Atalhos Globais Win32:** Registro via \`ctypes.windll.user32.RegisterHotKey\` (não interfere em jogos em tela cheia nem consome CPU).
-- **Auto-Recovery DHCP:** Mecanismo automático via \`tinytuya.deviceScan()\` para recuperar a comunicação caso o roteador atribua novo IP.
-- **API REST Local:** Servidor FastAPI + Uvicorn em \`http://127.0.0.1:21420\` para automação via Stream Deck, scripts ou Home Assistant.
-- **Bandeja do Windows:** Ícone dinâmico em \`pystray\` com representação fiel da cor e estado da lâmpada.
+- **Atalhos Globais Win32:** Registro via \`ctypes.windll.user32.RegisterHotKey\` com fallback inteligente caso outro software (ex: AMD Radeon/NVIDIA) reserve uma combinação.
+- **Bandeja do Windows:** Ícone dinâmico em \`pystray\` com opção para abrir o painel web no navegador.
 
 ---
 
@@ -1047,6 +1279,7 @@ pip install -r requirements.txt
 - **Em Primeiro Plano (Debug):** \`python main.py\`
 - **Silencioso em Background:** Dê duplo clique em \`start_background.vbs\` ou rode \`pythonw main.py\`
 - **Auto-Inicialização no Windows 11:** Execute \`install_startup.bat\`
+- **Acessar Painel Web:** Abra http://127.0.0.1:21420 ou clique em "Abrir Cockpit no Navegador" no ícone da bandeja.
 `
   }
 ];

@@ -94,8 +94,8 @@ export const ApiExplorer: React.FC<ApiExplorerProps> = ({ state, apiLogs }) => {
     if (selectedEndpoint.method === 'GET') {
       return `curl -s ${url}`;
     }
-    const cleanJson = JSON.stringify(JSON.parse(payloadInput || '{}')).replace(/"/g, '\\"');
-    return `curl -s -X POST ${url} -H "Content-Type: application/json" -d "${cleanJson}"`;
+    const cleanJson = JSON.stringify(JSON.parse(payloadInput || '{}'));
+    return `echo ${cleanJson} | curl -s -X POST ${url} -H "Content-Type: application/json" -d @-`;
   };
 
   const generatePowerShell = () => {

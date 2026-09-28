@@ -1,6 +1,7 @@
 import pystray
 from PIL import Image, ImageDraw
 import logging
+import webbrowser
 from typing import Callable, Optional
 
 logger = logging.getLogger("TrayUI")
@@ -48,8 +49,15 @@ class SystemTrayApp:
         else:
             self.icon.icon = self._create_icon(rgb)
 
+    def _open_web_dashboard(self):
+        try:
+            webbrowser.open("http://127.0.0.1:21420")
+        except Exception as e:
+            logger.error(f"Erro ao abrir navegador: {e}")
+
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
+            pystray.MenuItem("Abrir Cockpit no Navegador", self._open_web_dashboard, default=True),
             pystray.MenuItem("Ligar / Desligar Lâmpada", lambda: self.on_toggle_power()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Efeitos & Dinâmicas", pystray.Menu(

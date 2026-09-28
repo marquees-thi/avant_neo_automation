@@ -55,9 +55,18 @@ export const WindowsTrayPreview: React.FC<WindowsTrayPreviewProps> = ({
                   <div className="px-2.5 py-1 text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
                     Avant Neo 50W IoT
                   </div>
+                  <a
+                    href="http://127.0.0.1:21420"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-neutral-800 hover:text-amber-300 font-semibold flex items-center justify-between transition-colors text-amber-400"
+                  >
+                    <span>Abrir Cockpit no Navegador</span>
+                    <span className="font-mono text-[10px] text-neutral-400">:21420</span>
+                  </a>
                   <button
                     onClick={onTogglePower}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-neutral-800 hover:text-white font-medium flex items-center justify-between transition-colors"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-neutral-800 hover:text-white font-medium flex items-center justify-between transition-colors mt-0.5"
                   >
                     <span>Ligar / Desligar Lâmpada</span>
                     <span className="font-mono text-[10px] text-neutral-400">Ctrl+Alt+L</span>
@@ -240,7 +249,7 @@ export const WindowsTrayPreview: React.FC<WindowsTrayPreviewProps> = ({
               >
                 <span className="text-neutral-300">Modo Leitura 4000K</span>
                 <span className="px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 border border-neutral-700 font-semibold">
-                  Ctrl + Alt + R
+                  Ctrl + Shift + R
                 </span>
               </div>
 
