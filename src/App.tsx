@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BulbState, TuyaDPS, TuyaPacketLog, ApiLog } from './types/bulb';
 import { virtualBulb } from './services/virtualTuyaBulb';
+import { apiBridge, BridgeStatus, RemoteBulbStatus } from './services/apiBridge';
 import { Navbar } from './components/Navbar';
 import { BulbVisualizer } from './components/BulbVisualizer';
 import { BulbControls } from './components/BulbControls';
@@ -21,11 +22,40 @@ export default function App() {
   const [packets, setPackets] = useState<TuyaPacketLog[]>([]);
   const [apiLogs, setApiLogs] = useState<ApiLog[]>([]);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>(apiBridge.getStatus());
+
+  // Subscribe to real Python backend bridge
+  useEffect(() => {
+    const unsubBridgeStatus = apiBridge.subscribeStatus((newStatus) => {
+      setBridgeStatus(newStatus);
+    });
+
+    const unsubBridgeData = apiBridge.subscribeData((remote: RemoteBulbStatus) => {
+      // Sync real bulb hardware state with React UI
+      setBulbState((prev) => ({
+        ...prev,
+        isOn: remote.power,
+        mode: remote.mode as 'white' | 'colour' | 'scene',
+        brightness: remote.brightness,
+        colorTemp: remote.color_temp,
+        rgb: remote.rgb,
+        activeScene: (remote.active_scene as any) || (remote.ambilight_running ? 'ambilight' : null),
+        lastUpdated: Date.now(),
+      }));
+    });
+
+    return () => {
+      unsubBridgeStatus();
+      unsubBridgeData();
+    };
+  }, []);
 
   // Subscribe to virtual bulb events
   useEffect(() => {
     const unsubState = virtualBulb.subscribe((newState) => {
-      setBulbState(newState);
+      if (!bridgeStatus.isConnected) {
+        setBulbState(newState);
+      }
       setTuyaDps(virtualBulb.getTuyaDPS());
     });
 
@@ -42,22 +72,76 @@ export default function App() {
       unsubPackets();
       unsubApi();
     };
-  }, []);
+  }, [bridgeStatus.isConnected]);
+
+  // Integrated Handlers (Dispatches to real hardware via apiBridge AND updates simulator)
+  const handleTogglePower = useCallback(async () => {
+    virtualBulb.toggle();
+    if (bridgeStatus.isConnected) {
+      await apiBridge.togglePower();
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleSetWhite = useCallback(async (brightness: number, colorTemp: number) => {
+    virtualBulb.setWhite(brightness, colorTemp);
+    if (bridgeStatus.isConnected) {
+      await apiBridge.setWhite(brightness, colorTemp);
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleSetRgb = useCallback(async (r: number, g: number, b: number) => {
+    virtualBulb.setRgb(r, g, b);
+    if (bridgeStatus.isConnected) {
+      await apiBridge.setRgb(r, g, b, false);
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleSetRgbStream = useCallback((r: number, g: number, b: number) => {
+    virtualBulb.setRgb(r, g, b, true);
+    if (bridgeStatus.isConnected) {
+      apiBridge.setRgb(r, g, b, true);
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleStartScene = useCallback(async (scene: 'cyberpunk' | 'candle' | 'circadian' | 'ambilight') => {
+    virtualBulb.startScene(scene);
+    if (bridgeStatus.isConnected) {
+      await apiBridge.startScene(scene);
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleStopScene = useCallback(async (restoreWhite = true) => {
+    virtualBulb.stopScene();
+    if (restoreWhite) {
+      virtualBulb.setWhite(100, 50);
+    }
+    if (bridgeStatus.isConnected) {
+      await apiBridge.stopScene(restoreWhite);
+    }
+  }, [bridgeStatus.isConnected]);
+
+  const handleRestoreNormal = useCallback(async () => {
+    virtualBulb.stopScene();
+    virtualBulb.setWhite(100, 50);
+    if (bridgeStatus.isConnected) {
+      await apiBridge.restoreNormalWhite();
+    }
+  }, [bridgeStatus.isConnected]);
 
   // Quick Preset Handler
-  const handleQuickPreset = (type: 'reading' | 'focus' | 'relax' | 'night' | 'cyberpunk') => {
+  const handleQuickPreset = useCallback(async (type: 'reading' | 'focus' | 'relax' | 'night' | 'cyberpunk') => {
     if (type === 'reading') {
-      virtualBulb.setWhite(100, 50); // 4600K
+      await handleSetWhite(100, 50); // 4600K
     } else if (type === 'focus') {
-      virtualBulb.setWhite(100, 100); // 6500K
+      await handleSetWhite(100, 100); // 6500K
     } else if (type === 'relax') {
-      virtualBulb.setWhite(100, 0); // 2700K
+      await handleSetWhite(100, 0); // 2700K
     } else if (type === 'night') {
-      virtualBulb.setWhite(15, 0); // 2700K 15% lux
+      await handleSetWhite(15, 0); // 2700K 15% lux
     } else if (type === 'cyberpunk') {
-      virtualBulb.startScene('cyberpunk');
+      await handleStartScene('cyberpunk');
     }
-  };
+  }, [handleSetWhite, handleStartScene]);
 
   // ZIP Generation & Download
   const handleDownloadZip = async () => {
@@ -65,7 +149,6 @@ export default function App() {
       setIsDownloadingZip(true);
       const zip = new JSZip();
 
-      // Add all files
       PYTHON_FILES.forEach((file) => {
         zip.file(file.path, file.content);
       });
@@ -89,14 +172,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans">
-      {/* 3-Zone Top Navigation Bar */}
+      {/* 3-Zone Top Navigation Bar with Real Hardware Connection Badge */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         state={bulbState}
-        onTogglePower={() => virtualBulb.toggle()}
+        bridgeStatus={bridgeStatus}
+        onTogglePower={handleTogglePower}
         onDownloadZip={handleDownloadZip}
         isDownloadingZip={isDownloadingZip}
+        onReconnectBridge={() => apiBridge.checkConnection()}
+        onUpdateBackendUrl={(url) => apiBridge.setBackendUrl(url)}
       />
 
       {/* Main Content Area */}
@@ -109,8 +195,8 @@ export default function App() {
               <div className="lg:col-span-5">
                 <BulbVisualizer
                   state={bulbState}
-                  onToggle={() => virtualBulb.toggle()}
-                  onBrightnessChange={(b) => virtualBulb.setBrightness(b)}
+                  onToggle={handleTogglePower}
+                  onBrightnessChange={(b) => handleSetWhite(b, bulbState.colorTemp)}
                   onQuickPreset={handleQuickPreset}
                 />
               </div>
@@ -119,9 +205,9 @@ export default function App() {
               <div className="lg:col-span-7">
                 <BulbControls
                   state={bulbState}
-                  onSetWhite={(b, c) => virtualBulb.setWhite(b, c)}
-                  onSetRgb={(r, g, b) => virtualBulb.setRgb(r, g, b)}
-                  onStartScene={(s) => virtualBulb.startScene(s)}
+                  onSetWhite={handleSetWhite}
+                  onSetRgb={handleSetRgb}
+                  onStartScene={handleStartScene}
                 />
               </div>
             </div>
@@ -137,9 +223,9 @@ export default function App() {
             {/* Windows 11 Tray Interface Preview */}
             <WindowsTrayPreview
               state={bulbState}
-              onTogglePower={() => virtualBulb.toggle()}
-              onSetWhite={(b, c) => virtualBulb.setWhite(b, c)}
-              onStartScene={(s) => virtualBulb.startScene(s)}
+              onTogglePower={handleTogglePower}
+              onSetWhite={handleSetWhite}
+              onStartScene={handleStartScene}
             />
           </div>
         )}
@@ -149,15 +235,15 @@ export default function App() {
           <div className="space-y-8">
             <AmbilightEngine
               state={bulbState}
-              onSetRgbStream={(r, g, b) => virtualBulb.setRgb(r, g, b, true)}
-              onStopScene={() => virtualBulb.stopScene()}
+              onSetRgbStream={handleSetRgbStream}
+              onStopScene={handleStopScene}
             />
 
             <ScenesEngine
               state={bulbState}
-              onStartScene={(s) => virtualBulb.startScene(s)}
-              onStopScene={() => virtualBulb.stopScene()}
-              onSetWhite={(b, c) => virtualBulb.setWhite(b, c)}
+              onStartScene={handleStartScene}
+              onStopScene={handleStopScene}
+              onSetWhite={handleSetWhite}
             />
           </div>
         )}
@@ -192,9 +278,9 @@ export default function App() {
             <SetupGuide />
             <WindowsTrayPreview
               state={bulbState}
-              onTogglePower={() => virtualBulb.toggle()}
-              onSetWhite={(b, c) => virtualBulb.setWhite(b, c)}
-              onStartScene={(s) => virtualBulb.startScene(s)}
+              onTogglePower={handleTogglePower}
+              onSetWhite={handleSetWhite}
+              onStartScene={handleStartScene}
             />
           </div>
         )}
@@ -206,7 +292,9 @@ export default function App() {
         <span className="mx-2">·</span>
         <span>Tuya Protocol 3.5 (TCP 6668 / UDP 6666-6667)</span>
         <span className="mx-2">·</span>
-        <span>Windows 11 Native Architecture</span>
+        <span className={bridgeStatus.isConnected ? 'text-emerald-400 font-semibold' : 'text-neutral-500'}>
+          {bridgeStatus.isConnected ? `Hardware Conectado (${bridgeStatus.backendUrl})` : 'Modo Simulador'}
+        </span>
       </footer>
     </div>
   );

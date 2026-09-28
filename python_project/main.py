@@ -31,22 +31,22 @@ def main():
     ambilight = ScreenSyncEngine(controller, config.screen_sync)
 
     # 3. Helpers de Controle de Fluxo
-    def stop_active_workers():
+    def stop_active_workers(restore_white: bool = False):
         if ambilight.is_running():
-            ambilight.stop()
+            ambilight.stop(restore_white=restore_white)
         if scenes.current_scene:
-            scenes.stop_active_scene()
+            scenes.stop_active_scene(restore_white=restore_white)
+        controller.clear_queue()
 
     def handle_toggle():
-        stop_active_workers()
+        stop_active_workers(restore_white=False)
         controller.toggle()
         tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
         logger.info(f"Power toggle -> {'Ligada' if controller.state.is_on else 'Desligada'}")
 
     def handle_reading_mode():
-        stop_active_workers()
-        # Leitura ideal: 100% de brilho, 4000K (temperatura intermediaria 50%)
-        controller.set_white(brightness=100, color_temp=50)
+        stop_active_workers(restore_white=False)
+        controller.restore_normal_white()
         tray_app.update_icon_color(True, (255, 235, 200))
         logger.info("Modo de leitura ativado: 4000K 100%")
 

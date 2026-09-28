@@ -59,6 +59,7 @@ class SystemTrayApp:
         return pystray.Menu(
             pystray.MenuItem("Abrir Cockpit no Navegador", self._open_web_dashboard, default=True),
             pystray.MenuItem("Ligar / Desligar Lâmpada", lambda: self.on_toggle_power()),
+            pystray.MenuItem("Restaurar ao Normal (4000K, 100%)", lambda: self.on_set_reading()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Efeitos & Dinâmicas", pystray.Menu(
                 pystray.MenuItem("Ambilight (Sincronizar Tela)", lambda: self.on_start_ambilight()),

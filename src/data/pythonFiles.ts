@@ -34,17 +34,17 @@ screen_sync:
 
 hotkeys:
   toggle_power: "ctrl+alt+l"
-  mode_reading: "ctrl+shift+r" # Atualizado para evitar conflito com driver AMD Radeon Software
+  mode_reading: "ctrl+shift+r" # Utiliza Shift em vez de Alt para evitar conflito com AMD Radeon Software
   mode_ambilight: "ctrl+alt+a"
   brightness_up: "ctrl+alt+up"
   brightness_down: "ctrl+alt+down"
-`
+`,
   },
   {
     path: 'requirements.txt',
     name: 'requirements.txt',
     category: 'config',
-    description: 'Dependências Python modernas para Windows 11',
+    description: 'Dependências do Python 3.10+ (tinytuya, pystray, mss, fastapi, uvicorn)',
     content: `tinytuya>=1.14.0
 pystray>=0.19.5
 Pillow>=10.2.0
@@ -53,142 +53,23 @@ fastapi>=0.110.0
 uvicorn>=0.28.0
 pydantic>=2.6.0
 pyyaml>=6.0.1
-`
+`,
   },
   {
-    path: 'main.py',
-    name: 'main.py',
+    path: 'core/__init__.py',
+    name: '__init__.py',
     category: 'core',
-    description: 'Ponto de entrada do sistema: orquestrador multithread e loop Win32',
-    content: `import sys
-import logging
-from core.config import load_config
-from core.controller import BulbController
-from core.scenes import SceneEngine
-from core.hotkeys import GlobalHotkeys
-from modules.screen_sync import ScreenSyncEngine
-from modules.api_server import APIServer
-from ui.tray import SystemTrayApp
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger("MainApp")
-
-def main():
-    logger.info("==================================================")
-    logger.info("Avant Neo 50W IoT Automation Suite (Windows 11)")
-    logger.info("Protocolo: Tuya 3.5 | Porta: 6668 | API: 21420")
-    logger.info("==================================================")
-
-    # 1. Carrega Configuracoes (config.yaml)
-    config = load_config()
-
-    # 2. Instancia Drivers Centrais
-    controller = BulbController(config)
-    scenes = SceneEngine(controller)
-    ambilight = ScreenSyncEngine(controller, config.screen_sync)
-
-    # 3. Helpers de Controle de Fluxo
-    def stop_active_workers():
-        if ambilight.is_running():
-            ambilight.stop()
-        if scenes.current_scene:
-            scenes.stop_active_scene()
-
-    def handle_toggle():
-        stop_active_workers()
-        controller.toggle()
-        tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
-        logger.info(f"Power toggle -> {'Ligada' if controller.state.is_on else 'Desligada'}")
-
-    def handle_reading_mode():
-        stop_active_workers()
-        # Leitura ideal: 100% de brilho, 4000K (temperatura intermediaria 50%)
-        controller.set_white(brightness=100, color_temp=50)
-        tray_app.update_icon_color(True, (255, 235, 200))
-        logger.info("Modo de leitura ativado: 4000K 100%")
-
-    def handle_start_scene(scene_name: str):
-        stop_active_workers()
-        scenes.start_scene(scene_name)
-        logger.info(f"Cena iniciada: {scene_name}")
-
-    def handle_start_ambilight():
-        stop_active_workers()
-        ambilight.start()
-        logger.info("Ambilight ativado via interface de bandeja")
-
-    def handle_brightness_change(brightness: int, temp: int | None):
-        stop_active_workers()
-        current_temp = controller.state.color_temp if temp is None else temp
-        controller.set_white(brightness=brightness, color_temp=current_temp)
-        logger.info(f"Brilho ajustado para {brightness}%, Temp: {current_temp}%")
-
-    def handle_quit():
-        logger.info("Encerrando aplicacao e liberando recursos de socket...")
-        stop_active_workers()
-        hotkeys.stop()
-        controller.close()
-        tray_app.stop()
-        sys.exit(0)
-
-    # 4. Servidor Local HTTP API e Cockpit Web (FastAPI + Uvicorn)
-    api_server = APIServer(
-        host=config.server.host,
-        port=config.server.port,
-        controller=controller,
-        scenes=scenes,
-        ambilight=ambilight
-    )
-    api_server.start()
-
-    # 5. Interface de Bandeja (System Tray - pystray)
-    tray_app = SystemTrayApp(
-        on_toggle_power=handle_toggle,
-        on_set_reading=handle_reading_mode,
-        on_start_scene=handle_start_scene,
-        on_start_ambilight=handle_start_ambilight,
-        on_brightness_change=handle_brightness_change,
-        on_quit=handle_quit
-    )
-
-    # Atualiza icone com estado inicial da lampada
-    tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
-
-    # 6. Atalhos Globais de Teclado (Win32 nativo com fallback)
-    hotkeys = GlobalHotkeys()
-    hotkeys.register(config.hotkeys.get("toggle_power", "ctrl+alt+l"), handle_toggle)
-    hotkeys.register(config.hotkeys.get("mode_reading", "ctrl+shift+r"), handle_reading_mode)
-    hotkeys.register(config.hotkeys.get("mode_ambilight", "ctrl+alt+a"), handle_start_ambilight)
-    hotkeys.register(
-        config.hotkeys.get("brightness_up", "ctrl+alt+up"),
-        lambda: handle_brightness_change(min(100, controller.state.brightness + 15), None)
-    )
-    hotkeys.register(
-        config.hotkeys.get("brightness_down", "ctrl+alt+down"),
-        lambda: handle_brightness_change(max(10, controller.state.brightness - 15), None)
-    )
-    hotkeys.start()
-
-    logger.info("Sistema operacional. Alocando thread principal para a interface do Windows.")
-
-    try:
-        tray_app.run()
-    except KeyboardInterrupt:
-        handle_quit()
-
-if __name__ == "__main__":
-    main()
-`
+    description: 'Inicializador do pacote de drivers principais',
+    content: `"""
+Core package for Avant Neo 50W IoT automation.
+"""
+`,
   },
   {
     path: 'core/config.py',
     name: 'config.py',
     category: 'core',
-    description: 'Validação Pydantic e persistência automática de novo IP',
+    description: 'Carregador seguro de configurações YAML e validação Pydantic',
     content: `import os
 import yaml
 from pydantic import BaseModel, Field
@@ -231,13 +112,13 @@ def update_device_ip(new_ip: str) -> None:
     data["device"]["ip"] = new_ip
     with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, default_flow_style=False)
-`
+`,
   },
   {
     path: 'core/controller.py',
     name: 'controller.py',
     category: 'core',
-    description: 'Driver da lâmpada com fila desacoplada e auto-recovery UDP',
+    description: 'Driver de baixa latência Tuya 3.5 com Latest-Value Sampling e restauração instantânea',
     content: `import time
 import logging
 import queue
@@ -252,19 +133,30 @@ class BulbState:
     def __init__(self):
         self.is_on: bool = False
         self.mode: str = "white"
-        self.brightness: int = 100
-        self.color_temp: int = 100
+        self.brightness: int = 100  # 0 a 100%
+        self.color_temp: int = 50   # 0 (quente 2700K) a 100 (frio 6500K)
         self.rgb: Tuple[int, int, int] = (255, 255, 255)
         self.last_seen: float = 0.0
 
 class BulbController:
+    """
+    Driver de baixa latência e alta resiliência para lâmpada inteligente Avant Neo 50W (Tuya 3.5).
+    """
     def __init__(self, config: AppConfig):
         self.config = config
         self.state = BulbState()
         self._lock = threading.Lock()
         
-        self._cmd_queue: queue.Queue = queue.Queue(maxsize=30)
+        self._cmd_queue: queue.Queue = queue.Queue(maxsize=15)
+        self._latest_stream_frame = None
+        self._stream_lock = threading.Lock()
+        self._abort_signal = threading.Event()
+        
         self._running = True
+        self._consecutive_priority_failures = 0
+        self._last_udp_scan_time = 0.0
+        self._last_packet_sent_time = 0.0
+        self._min_packet_interval = 0.18
         
         self.device = self._create_device_instance(self.config.device.ip)
         
@@ -284,54 +176,107 @@ class BulbController:
         dev.set_socketTimeout(self.config.device.socket_timeout)
         return dev
 
+    def clear_queue(self):
+        with self._stream_lock:
+            self._latest_stream_frame = None
+        with self._cmd_queue.mutex:
+            self._cmd_queue.queue.clear()
+        self._abort_signal.set()
+        time.sleep(0.01)
+        self._abort_signal.clear()
+        logger.debug("Fila de comandos da lâmpada purgada instantaneamente.")
+
     def _command_worker(self):
         while self._running:
+            item = None
+            is_stream_item = False
+            
             try:
-                cmd, args, kwargs = self._cmd_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-
-            success = False
-            for attempt in range(2):
-                try:
-                    cmd(*args, **kwargs)
-                    success = True
-                    break
-                except Exception as e:
-                    logger.warning(f"Falha de I/O na tentativa {attempt + 1}: {e}")
-                    time.sleep(0.1)
-
-            if not success:
-                logger.error("Falha persistente de rede com a lampada. Iniciando auto-recovery UDP...")
-                self._handle_network_failure()
-
-            self._cmd_queue.task_done()
-
-    def _dispatch(self, func: Callable, *args, drop_if_congested: bool = False, **kwargs):
-        if drop_if_congested and self._cmd_queue.full():
-            try:
-                self._cmd_queue.get_nowait()
-                self._cmd_queue.task_done()
+                item = self._cmd_queue.get_nowait()
+                is_stream_item = False
             except queue.Empty:
                 pass
+            
+            if item is None:
+                with self._stream_lock:
+                    if self._latest_stream_frame is not None:
+                        item = self._latest_stream_frame
+                        self._latest_stream_frame = None
+                        is_stream_item = True
+
+            if item is None:
+                time.sleep(0.01)
+                continue
+
+            now = time.perf_counter()
+            time_since_last = now - self._last_packet_sent_time
+            if is_stream_item and time_since_last < self._min_packet_interval:
+                time.sleep(self._min_packet_interval - time_since_last)
+
+            if is_stream_item and self._abort_signal.is_set():
+                continue
+
+            cmd, args, kwargs = item
+            success = False
+            
+            try:
+                cmd(*args, **kwargs)
+                success = True
+                self._last_packet_sent_time = time.perf_counter()
+                if not is_stream_item:
+                    self._consecutive_priority_failures = 0
+            except Exception as e:
+                if not is_stream_item:
+                    logger.warning(f"Falha ao enviar comando prioritário: {e}")
+                    self._consecutive_priority_failures += 1
+                else:
+                    logger.debug(f"Frame de streaming descartado: {e}")
+
+            if not is_stream_item and not success and self._consecutive_priority_failures >= 4:
+                self._trigger_async_recovery()
+
+            if not is_stream_item:
+                try:
+                    self._cmd_queue.task_done()
+                except ValueError:
+                    pass
+
+    def _dispatch_priority(self, func: Callable, *args, **kwargs):
+        self.clear_queue()
         try:
             self._cmd_queue.put_nowait((func, args, kwargs))
         except queue.Full:
             pass
 
-    def _handle_network_failure(self):
-        logger.info("Executando varredura UDP por tinytuya.deviceScan()...")
+    def _dispatch_stream(self, func: Callable, *args, **kwargs):
+        with self._stream_lock:
+            self._latest_stream_frame = (func, args, kwargs)
+
+    def _trigger_async_recovery(self):
+        now = time.time()
+        if now - self._last_udp_scan_time < 45.0:
+            return
+        
+        self._last_udp_scan_time = now
+        logger.warning("Múltiplas falhas com a lâmpada. Iniciando descoberta UDP em background...")
+        t = threading.Thread(target=self._run_udp_scan, daemon=True, name="UDPRecoveryThread")
+        t.start()
+
+    def _run_udp_scan(self):
         try:
             devices = tinytuya.deviceScan(verbose=False, maxretry=2)
             if self.config.device.id in devices:
                 new_ip = devices[self.config.device.id]["ip"]
                 if new_ip != self.config.device.ip:
-                    logger.info(f"Dispositivo encontrado em novo IP: {new_ip}")
+                    logger.info(f"Lâmpada encontrada em novo IP: {new_ip}")
                     self.config.device.ip = new_ip
                     update_device_ip(new_ip)
                     self.device = self._create_device_instance(new_ip)
+                    self._consecutive_priority_failures = 0
+                else:
+                    logger.info("IP da lâmpada inalterado. Aguardando estabilização do Wi-Fi.")
         except Exception as e:
-            logger.error(f"Erro na recuperacao UDP: {e}")
+            logger.error(f"Erro na varredura UDP: {e}")
 
     def sync_state(self) -> Dict[str, Any]:
         try:
@@ -348,16 +293,16 @@ class BulbController:
                     self.state.last_seen = time.time()
                 return dps
         except Exception as e:
-            logger.error(f"Erro ao consultar status: {e}")
+            logger.warning(f"Erro ao consultar status da lâmpada: {e}")
         return {}
 
     def turn_on(self):
-        self._dispatch(self.device.turn_on)
+        self._dispatch_priority(self.device.turn_on)
         with self._lock:
             self.state.is_on = True
 
     def turn_off(self):
-        self._dispatch(self.device.turn_off)
+        self._dispatch_priority(self.device.turn_off)
         with self._lock:
             self.state.is_on = False
 
@@ -368,13 +313,13 @@ class BulbController:
             self.turn_on()
 
     def set_white(self, brightness: int, color_temp: int):
-        b = max(0, min(100, brightness))
+        b = max(1, min(100, brightness))
         c = max(0, min(100, color_temp))
 
         def _action():
             self.device.set_white_percentage(b, c)
 
-        self._dispatch(_action)
+        self._dispatch_priority(_action)
         with self._lock:
             self.state.is_on = True
             self.state.mode = "white"
@@ -389,23 +334,33 @@ class BulbController:
         def _action():
             self.device.set_colour(r_clamped, g_clamped, b_clamped)
 
-        self._dispatch(_action, drop_if_congested=stream_mode)
+        if stream_mode:
+            self._dispatch_stream(_action)
+        else:
+            self._dispatch_priority(_action)
+
         with self._lock:
             self.state.is_on = True
             self.state.mode = "colour"
             self.state.rgb = (r_clamped, g_clamped, b_clamped)
 
+    def restore_normal_white(self):
+        self.clear_queue()
+        self.set_white(100, 50)
+        logger.info("Lâmpada restaurada instantaneamente ao modo normal (4000K, 100%).")
+
     def close(self):
         self._running = False
+        self.clear_queue()
         if self._worker_thread.is_alive():
-            self._worker_thread.join(timeout=1.0)
-`
+            self._worker_thread.join(timeout=0.5)
+`,
   },
   {
     path: 'core/scenes.py',
     name: 'scenes.py',
     category: 'core',
-    description: 'Motor de efeitos dinâmicos: Cyberpunk, Vela e Ciclo Circadiano',
+    description: 'Engine de efeitos contínuos (Cyberpunk, Vela, Circadiano) com cancelamento imediato',
     content: `import time
 import math
 import random
@@ -428,15 +383,20 @@ class SceneEngine:
     def current_scene(self) -> Optional[str]:
         return self._current_scene_name
 
-    def stop_active_scene(self):
-        if self._thread and self._thread.is_alive():
-            self._stop_event.set()
-            self._thread.join(timeout=2.0)
+    def stop_active_scene(self, restore_white: bool = False):
         self._current_scene_name = None
-        self._stop_event.clear()
+        self._stop_event.set()
+        self.controller.clear_queue()
+        
+        if restore_white:
+            self.controller.restore_normal_white()
+            
+        logger.info("Cena ativa finalizada instantaneamente.")
 
     def start_scene(self, scene_name: str):
-        self.stop_active_scene()
+        self.stop_active_scene(restore_white=False)
+        self._stop_event.clear()
+
         target_map = {
             "cyberpunk": self._loop_cyberpunk,
             "candle": self._loop_candle,
@@ -444,7 +404,7 @@ class SceneEngine:
         }
         target = target_map.get(scene_name.lower())
         if not target:
-            raise ValueError(f"Cena desconhecida: {scene_name}")
+            raise ValueError(f"Cena desconhecida: {scene_name}. Disponíveis: {list(target_map.keys())}")
 
         self._current_scene_name = scene_name.lower()
         self._thread = threading.Thread(target=target, daemon=True, name=f"Scene-{scene_name}")
@@ -455,6 +415,7 @@ class SceneEngine:
         color_a = (0, 255, 255)
         color_b = (255, 0, 150)
         t = 0.0
+        
         while not self._stop_event.is_set():
             sin_val = (math.sin(t) + 1.0) / 2.0
             r = int(color_a[0] + (color_b[0] - color_a[0]) * sin_val)
@@ -462,17 +423,19 @@ class SceneEngine:
             b = int(color_a[2] + (color_b[2] - color_a[2]) * sin_val)
 
             self.controller.set_rgb(r, g, b, stream_mode=True)
-            t += 0.08
-            time.sleep(0.05)
+            t += 0.22
+            if self._stop_event.wait(0.20):
+                break
 
     def _loop_candle(self):
         while not self._stop_event.is_set():
             r = 255
-            g = random.randint(100, 155)
-            b = random.randint(10, 35)
+            g = random.randint(95, 145)
+            b = random.randint(8, 28)
 
             self.controller.set_rgb(r, g, b, stream_mode=True)
-            time.sleep(random.uniform(0.08, 0.25))
+            if self._stop_event.wait(random.uniform(0.22, 0.40)):
+                break
 
     def _loop_circadian(self):
         while not self._stop_event.is_set():
@@ -495,14 +458,15 @@ class SceneEngine:
                 temp = 0
 
             self.controller.set_white(brightness, temp)
-            self._stop_event.wait(60.0)
-`
+            if self._stop_event.wait(60.0):
+                break
+`,
   },
   {
     path: 'core/hotkeys.py',
     name: 'hotkeys.py',
     category: 'core',
-    description: 'Atalhos globais de teclado usando a API nativa Win32 com fallback inteligente',
+    description: 'Atalhos globais de teclado usando RegisterHotKey com fallback automático',
     content: `import ctypes
 from ctypes import wintypes
 import threading
@@ -584,25 +548,25 @@ class GlobalHotkeys:
                 err = kernel32.GetLastError()
                 if err == ERROR_HOTKEY_ALREADY_REGISTERED:
                     logger.warning(
-                        f"Atalho '{hotkey_str}' (ID {hid}) já está em uso por outro aplicativo no Windows "
-                        f"(ex: AMD Radeon Software Adrenalin / NVIDIA / Game Bar)."
+                        f"Atalho '{hotkey_str}' (ID {hid}) já está em uso por outro aplicativo no Windows. "
+                        f"Tentando tecla alternativa..."
                     )
                     fallback_mods = (mods & ~MOD_ALT) | MOD_SHIFT if (mods & MOD_ALT) else (mods | MOD_ALT)
                     fallback_name = hotkey_str.replace("alt", "shift") if "alt" in hotkey_str else hotkey_str + "+alt"
                     if user32.RegisterHotKey(None, hid, fallback_mods, vk):
                         registered_ids.append(hid)
-                        logger.info(f"Atalho alternativo registrado com sucesso: '{fallback_name}' (ID {hid})")
+                        logger.info(f"Atalho alternativo registrado: '{fallback_name}' (ID {hid})")
                     else:
-                        logger.warning(f"Não foi possível registrar atalho '{hotkey_str}'. Altere o mapeamento no config.yaml.")
+                        logger.warning(f"Não foi possível registrar '{hotkey_str}'. Altere o mapeamento no config.yaml.")
                 else:
-                    logger.error(f"Falha ao registrar hotkey ID {hid} ({hotkey_str}), Win32 Error: {err}")
+                    logger.warning(f"Aviso ao registrar atalho ID {hid} ({hotkey_str}): Win32 Error {err}")
 
         msg = wintypes.MSG()
         while self._running:
             res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
             if res <= 0:
                 break
-            if msg.message == 0x0312:
+            if msg.message == 0x0312:  # WM_HOTKEY
                 hid = msg.wParam
                 if hid in self._handlers:
                     _, _, cb, _ = self._handlers[hid]
@@ -617,14 +581,25 @@ class GlobalHotkeys:
     def stop(self):
         self._running = False
         user32.PostQuitMessage(0)
-`
+`,
+  },
+  {
+    path: 'modules/__init__.py',
+    name: '__init__.py',
+    category: 'modules',
+    description: 'Inicializador dos módulos de serviço',
+    content: `"""
+Modules package for Avant Neo 50W IoT automation.
+"""
+`,
   },
   {
     path: 'modules/screen_sync.py',
     name: 'screen_sync.py',
     category: 'modules',
-    description: 'Motor Ambilight com mss C-native, reforço de saturação e LERP a 20 FPS',
+    description: 'Ambilight de alta fidelidade (mss + LERP + delta threshold) com proteção de buffer',
     content: `import time
+import math
 import logging
 import threading
 from typing import Tuple, Optional
@@ -642,6 +617,8 @@ class ScreenSyncEngine:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._current_rgb: Tuple[float, float, float] = (255.0, 255.0, 255.0)
+        self._last_dispatched_rgb: Tuple[int, int, int] = (0, 0, 0)
+        self._last_dispatch_time = 0.0
 
     def is_running(self) -> bool:
         return self._running
@@ -654,11 +631,12 @@ class ScreenSyncEngine:
         self._thread.start()
         logger.info("Motor Ambilight iniciado com sucesso.")
 
-    def stop(self):
+    def stop(self, restore_white: bool = False):
         self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        logger.info("Motor Ambilight parado.")
+        self.controller.clear_queue()
+        if restore_white:
+            self.controller.restore_normal_white()
+        logger.info("Motor Ambilight parado instantaneamente.")
 
     def _boost_saturation(self, r: int, g: int, b: int, factor: float) -> Tuple[int, int, int]:
         rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
@@ -706,210 +684,107 @@ class ScreenSyncEngine:
         return (int((r1 + m) * 255), int((g1 + m) * 255), int((b1 + m) * 255))
 
     def _capture_loop(self):
-        target_delay = 1.0 / self.config.target_fps
+        target_interval = 0.20
         lerp_alpha = self.config.smooth_factor
 
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]
 
-            while self._running:
-                loop_start = time.perf_counter()
+                while self._running:
+                    loop_start = time.perf_counter()
 
-                sct_img = sct.grab(monitor)
-                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                tiny = img.resize((1, 1), Image.Resampling.BILINEAR)
-                raw_r, raw_g, raw_b = tiny.getpixel((0, 0))
+                    try:
+                        sct_img = sct.grab(monitor)
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        tiny = img.resize((1, 1), Image.Resampling.BILINEAR)
+                        raw_r, raw_g, raw_b = tiny.getpixel((0, 0))
 
-                target_r, target_g, target_b = self._boost_saturation(
-                    raw_r, raw_g, raw_b, self.config.saturation_boost
-                )
+                        target_r, target_g, target_b = self._boost_saturation(
+                            raw_r, raw_g, raw_b, self.config.saturation_boost
+                        )
 
-                cur_r, cur_g, cur_b = self._current_rgb
-                final_r = cur_r + (target_r - cur_r) * lerp_alpha
-                final_g = cur_g + (target_g - cur_g) * lerp_alpha
-                final_b = cur_b + (target_b - cur_b) * lerp_alpha
-                self._current_rgb = (final_r, final_g, final_b)
+                        cur_r, cur_g, cur_b = self._current_rgb
+                        final_r = cur_r + (target_r - cur_r) * lerp_alpha
+                        final_g = cur_g + (target_g - cur_g) * lerp_alpha
+                        final_b = cur_b + (target_b - cur_b) * lerp_alpha
+                        self._current_rgb = (final_r, final_g, final_b)
 
-                self.controller.set_rgb(int(final_r), int(final_g), int(final_b), stream_mode=True)
+                        out_r = int(final_r)
+                        out_g = int(final_g)
+                        out_b = int(final_b)
 
-                elapsed = time.perf_counter() - loop_start
-                sleep_time = target_delay - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-`
+                        now = time.perf_counter()
+                        delta = math.sqrt(
+                            (out_r - self._last_dispatched_rgb[0]) ** 2 +
+                            (out_g - self._last_dispatched_rgb[1]) ** 2 +
+                            (out_b - self._last_dispatched_rgb[2]) ** 2
+                        )
+
+                        if delta >= 8.0 or (now - self._last_dispatch_time) >= 2.0:
+                            self.controller.set_rgb(out_r, out_g, out_b, stream_mode=True)
+                            self._last_dispatched_rgb = (out_r, out_g, out_b)
+                            self._last_dispatch_time = now
+
+                    except Exception as e:
+                        logger.debug(f"Hiccup na captura Ambilight: {e}")
+
+                    elapsed = time.perf_counter() - loop_start
+                    sleep_time = target_interval - elapsed
+                    if sleep_time > 0 and self._running:
+                        time.sleep(sleep_time)
+
+        except Exception as e:
+            logger.error(f"Erro no loop do Ambilight: {e}")
+            self._running = False
+`,
   },
   {
     path: 'modules/api_server.py',
     name: 'api_server.py',
     category: 'modules',
-    description: 'Servidor local FastAPI + Uvicorn com Cockpit Web integrado em http://127.0.0.1:21420',
-    content: `import logging
-import threading
+    description: 'Servidor FastAPI com suporte a JSON, Query Params e hospedagem direta do Cockpit',
+    content: `import os
 import json
+import logging
+import threading
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
-from typing import Optional
+from fastapi.staticfiles import StaticFiles
 from core.controller import BulbController
 from core.scenes import SceneEngine
 from modules.screen_sync import ScreenSyncEngine
 
 logger = logging.getLogger("APIServer")
 
-app = FastAPI(title="Avant Neo 50W IoT Engine", version="1.0.0")
+app = FastAPI(title="Avant Neo 50W IoT Engine", version="1.1.0")
 
-class ColorRGBRequest(BaseModel):
-    r: int = Field(..., ge=0, le=255)
-    g: int = Field(..., ge=0, le=255)
-    b: int = Field(..., ge=0, le=255)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class WhiteRequest(BaseModel):
-    brightness: int = Field(..., ge=0, le=100)
-    color_temp: int = Field(..., ge=0, le=100)
-
-class SceneRequest(BaseModel):
-    scene: str
-
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Avant Neo 50W · Cockpit Local</title>
-  <style>
-    :root { --bg: #0a0a0a; --card-bg: #141414; --border: #262626; --text: #ededed; --muted: #a1a1a1; --accent: #f59e0b; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    body { background: var(--bg); color: var(--text); padding: 20px; display: flex; justify-content: center; }
-    .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
-    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
-    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; }
-    .badge { font-size: 0.75rem; background: #222; color: #10b981; border: 1px solid #059669; padding: 2px 8px; border-radius: 4px; font-family: monospace; }
-    .btn-power { background: #262626; border: 1px solid #404040; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; }
-    .btn-power.on { background: rgba(245, 158, 11, 0.2); border-color: #f59e0b; color: #fbbf24; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
-    @media(min-width: 768px) { .grid { grid-template-columns: 320px 1fr; } }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-    .visualizer { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; border-radius: 10px; background: #0c0c0c; border: 1px solid #1f1f1f; }
-    .bulb-glow { width: 110px; height: 110px; border-radius: 50%; transition: all 0.3s; border: 2px solid #333; }
-    .slider-group { display: flex; flex-direction: column; gap: 6px; }
-    .slider-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
-    input[type=range] { width: 100%; height: 6px; border-radius: 4px; background: #262626; outline: none; appearance: none; cursor: pointer; accent-color: var(--accent); }
-    .cct-slider { background: linear-gradient(to right, #ff9e22 0%, #ffdf9e 40%, #ffffff 70%, #d4e8ff 100%) !important; }
-    .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .btn-preset { background: #1a1a1a; border: 1px solid #2a2a2a; color: #ccc; padding: 8px; border-radius: 8px; font-size: 0.75rem; font-weight: 500; cursor: pointer; text-align: center; }
-    .btn-preset:hover { background: #262626; color: #fff; }
-    .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-    .swatch { height: 34px; border-radius: 6px; cursor: pointer; }
-    .scenes-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .btn-scene { background: #171717; border: 1px solid #262626; color: #ddd; padding: 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; text-align: left; }
-    .btn-scene.active { background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; color: #fbbf24; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <span class="brand">Avant Neo 50W</span>
-        <span class="badge">Tuya 3.5 :6668</span>
-      </div>
-      <button id="pwrBtn" class="btn-power" onclick="togglePower()">Carregando...</button>
-    </header>
-    <div class="grid">
-      <div class="card">
-        <div class="visualizer"><div id="bulbGlow" class="bulb-glow"></div></div>
-        <div class="slider-group">
-          <div class="slider-label"><span>Brilho</span><span id="txtBrightness">100%</span></div>
-          <input type="range" id="rngBrightness" min="1" max="100" value="100" onchange="sendWhite()">
-        </div>
-        <div class="slider-group">
-          <div class="slider-label"><span>Temperatura CCT</span><span id="txtTemp">4600K</span></div>
-          <input type="range" id="rngTemp" class="cct-slider" min="0" max="100" value="50" onchange="sendWhite()">
-        </div>
-        <div class="btn-grid">
-          <button class="btn-preset" onclick="setPreset(100, 0)">2700K Relax</button>
-          <button class="btn-preset" onclick="setPreset(100, 50)">4000K Leitura</button>
-          <button class="btn-preset" onclick="setPreset(100, 100)">6500K Foco</button>
-          <button class="btn-preset" onclick="setPreset(15, 0)">Noturno</button>
-        </div>
-      </div>
-      <div class="card">
-        <div style="font-size:0.85rem; font-weight:600; color:#fff;">CORES RGB RÁPIDAS</div>
-        <div class="swatches">
-          <div class="swatch" style="background:#00ffff;" onclick="sendRgb(0,255,255)"></div>
-          <div class="swatch" style="background:#ff0096;" onclick="sendRgb(255,0,150)"></div>
-          <div class="swatch" style="background:#ff8c14;" onclick="sendRgb(255,140,20)"></div>
-          <div class="swatch" style="background:#a855f7;" onclick="sendRgb(168,85,247)"></div>
-          <div class="swatch" style="background:#2563eb;" onclick="sendRgb(37,99,235)"></div>
-          <div class="swatch" style="background:#22c55e;" onclick="sendRgb(34,197,94)"></div>
-        </div>
-        <div style="font-size:0.85rem; font-weight:600; color:#fff; margin-top:10px;">EFEITOS EM BACKGROUND</div>
-        <div class="scenes-grid">
-          <button id="btnAmbilight" class="btn-scene" onclick="toggleScene('ambilight')">Ambilight (Tela)</button>
-          <button id="btnCircadian" class="btn-scene" onclick="toggleScene('circadian')">Ritmo Circadiano</button>
-          <button id="btnCandle" class="btn-scene" onclick="toggleScene('candle')">Vela / Lareira</button>
-          <button id="btnCyberpunk" class="btn-scene" onclick="toggleScene('cyberpunk')">Cyberpunk</button>
-        </div>
-        <button class="btn-preset" style="width:100%; margin-top:auto;" onclick="stopScenes()">Pausar Efeitos Dinâmicos</button>
-      </div>
-    </div>
-  </div>
-  <script>
-    let curState = null;
-    async function fetchStatus() {
-      try {
-        const res = await fetch('/api/status');
-        if (!res.ok) return;
-        const d = await res.json();
-        curState = d;
-        document.getElementById('pwrBtn').innerText = d.power ? 'Ligada' : 'Desligada';
-        document.getElementById('pwrBtn').className = 'btn-power ' + (d.power ? 'on' : '');
-        const g = document.getElementById('bulbGlow');
-        g.style.backgroundColor = d.power ? 'rgb(' + d.rgb.join(',') + ')' : '#222';
-        g.style.boxShadow = d.power ? '0 0 ' + (d.brightness * 0.7) + 'px rgba(' + d.rgb.join(',') + ', 0.8)' : 'none';
-        document.getElementById('rngBrightness').value = d.brightness;
-        document.getElementById('txtBrightness').innerText = d.brightness + '%';
-        document.getElementById('rngTemp').value = d.color_temp;
-        document.getElementById('txtTemp').innerText = Math.round(2700 + (d.color_temp / 100) * 3800) + 'K';
-        ['ambilight','circadian','candle','cyberpunk'].forEach(sc => {
-          const b = document.getElementById('btn' + sc.charAt(0).toUpperCase() + sc.slice(1));
-          if (b) (d.active_scene === sc || (sc==='ambilight'&&d.ambilight_running)) ? b.classList.add('active') : b.classList.remove('active');
-        });
-      } catch (e) {}
-    }
-    async function togglePower() { await fetch('/api/power/toggle', {method:'POST'}); fetchStatus(); }
-    async function sendWhite() {
-      const b = parseInt(document.getElementById('rngBrightness').value);
-      const t = parseInt(document.getElementById('rngTemp').value);
-      await fetch('/api/color/white', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({brightness:b, color_temp:t})});
-      fetchStatus();
-    }
-    async function setPreset(b, t) { document.getElementById('rngBrightness').value = b; document.getElementById('rngTemp').value = t; await sendWhite(); }
-    async function sendRgb(r,g,b) { await fetch('/api/color/rgb', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({r,g,b})}); fetchStatus(); }
-    async function toggleScene(s) {
-      if (curState && (curState.active_scene === s || (s==='ambilight'&&curState.ambilight_running))) { await stopScenes(); }
-      else { await fetch('/api/scene/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({scene:s})}); }
-      fetchStatus();
-    }
-    async function stopScenes() { await fetch('/api/scene/stop', {method:'POST'}); fetchStatus(); }
-    fetchStatus(); setInterval(fetchStatus, 1500);
-  </script>
-</body>
-</html>
-"""
-
-async def parse_flexible_json(request: Request) -> dict:
-    body_bytes = await request.body()
-    if not body_bytes:
-        return {}
-    text = body_bytes.decode("utf-8", errors="replace").strip()
-    if '\\"' in text:
-        text = text.replace('\\"', '"')
+async def parse_request_data(request: Request) -> dict:
+    data = dict(request.query_params)
     try:
-        return json.loads(text)
+        body_bytes = await request.body()
+        if body_bytes:
+            text = body_bytes.decode("utf-8", errors="replace").strip()
+            if text.startswith("{") and text.endswith("}"):
+                data.update(json.loads(text))
+            elif "=" in text:
+                for part in text.split("&"):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        data[k.strip()] = v.strip()
     except Exception as e:
-        logger.warning(f"Erro ao decodificar JSON bruto: {e}, payload: {text}")
-        raise HTTPException(status_code=400, detail=f"JSON invalido: {text}")
+        logger.debug(f"Tentativa de ler body como JSON: {e}")
+    return data
 
 class APIServer:
     def __init__(
@@ -925,17 +800,30 @@ class APIServer:
         self.controller = controller
         self.scenes = scenes
         self.ambilight = ambilight
-        self._server_thread: Optional[threading.Thread] = None
+        self._server_thread = None
         self._setup_routes()
 
     def _setup_routes(self):
-        @app.get("/", response_class=HTMLResponse)
-        def serve_dashboard():
-            return HTMLResponse(content=DASHBOARD_HTML)
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        dist_dir = os.path.join(base_dir, "web")
+        if not os.path.exists(dist_dir):
+            dist_dir = os.path.join(base_dir, "..", "dist")
 
-        @app.get("/dashboard", response_class=HTMLResponse)
-        def serve_dashboard_alias():
-            return HTMLResponse(content=DASHBOARD_HTML)
+        has_dist = os.path.exists(dist_dir) and os.path.exists(os.path.join(dist_dir, "index.html"))
+
+        if has_dist:
+            assets_dir = os.path.join(dist_dir, "assets")
+            if os.path.exists(assets_dir):
+                app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+            @app.get("/", response_class=HTMLResponse)
+            def serve_built_app():
+                with open(os.path.join(dist_dir, "index.html"), "r", encoding="utf-8") as f:
+                    return HTMLResponse(content=f.read())
+        else:
+            @app.get("/", response_class=HTMLResponse)
+            def serve_dashboard():
+                return HTMLResponse(content="<h1>Avant Neo 50W IoT Engine Operacional</h1><p>Acesse /api/status</p>")
 
         @app.get("/api/status")
         def get_status():
@@ -949,60 +837,93 @@ class APIServer:
                 "ambilight_running": self.ambilight.is_running()
             }
 
-        @app.post("/api/power/toggle")
+        @app.api_route("/api/power/toggle", methods=["GET", "POST"])
         def toggle_power():
-            self._disable_dynamic_modes()
+            self._disable_dynamic_modes(restore_white=False)
             self.controller.toggle()
             return {"status": "ok", "power": self.controller.state.is_on}
 
-        @app.post("/api/color/rgb")
+        @app.api_route("/api/color/rgb", methods=["GET", "POST"])
         async def set_rgb(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "r" not in data or "g" not in data or "b" not in data:
-                raise HTTPException(status_code=400, detail="Campos r, g, b obrigatorios (0 a 255)")
-            r, g, b = int(data["r"]), int(data["g"]), int(data["b"])
-            self._disable_dynamic_modes()
-            self.controller.set_rgb(r, g, b)
-            return {"status": "ok", "rgb": [r, g, b]}
+                raise HTTPException(status_code=400, detail="Campos r, g, b obrigatórios (0 a 255)")
+            
+            try:
+                r = int(float(data["r"]))
+                g = int(float(data["g"]))
+                b = int(float(data["b"]))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Valores de r, g, b devem ser inteiros")
 
-        @app.post("/api/color/white")
+            is_stream = str(data.get("stream", "false")).lower() in ("true", "1", "yes")
+
+            if not is_stream:
+                self._disable_dynamic_modes(restore_white=False)
+                self.controller.set_rgb(r, g, b, stream_mode=False)
+            else:
+                self.controller.set_rgb(r, g, b, stream_mode=True)
+
+            return {"status": "ok", "rgb": [r, g, b], "stream": is_stream}
+
+        @app.api_route("/api/color/white", methods=["GET", "POST"])
         async def set_white(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "brightness" not in data or "color_temp" not in data:
-                raise HTTPException(status_code=400, detail="Campos brightness e color_temp obrigatorios")
-            b = int(data["brightness"])
-            t = int(data["color_temp"])
-            self._disable_dynamic_modes()
-            self.controller.set_white(b, t)
-            return {"status": "ok", "brightness": b, "color_temp": t}
+                raise HTTPException(status_code=400, detail="Campos brightness e color_temp obrigatórios")
+            
+            try:
+                brightness = int(float(data["brightness"]))
+                color_temp = int(float(data["color_temp"]))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Valores devem ser inteiros")
 
-        @app.post("/api/scene/start")
+            self._disable_dynamic_modes(restore_white=False)
+            self.controller.set_white(brightness, color_temp)
+            return {"status": "ok", "brightness": brightness, "color_temp": color_temp}
+
+        @app.api_route("/api/scene/start", methods=["GET", "POST"])
         async def start_scene(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "scene" not in data:
-                raise HTTPException(status_code=400, detail="Campo 'scene' obrigatorio")
-            scene_name = str(data["scene"]).lower()
+                raise HTTPException(status_code=400, detail="Campo 'scene' obrigatório")
+            
+            scene_name = str(data["scene"]).lower().strip()
             if scene_name == "ambilight":
-                self.scenes.stop_active_scene()
+                self.scenes.stop_active_scene(restore_white=False)
+                self.controller.clear_queue()
                 self.ambilight.start()
                 return {"status": "ok", "mode": "ambilight"}
+            
             try:
-                self.ambilight.stop()
+                self.ambilight.stop(restore_white=False)
+                self.controller.clear_queue()
                 self.scenes.start_scene(scene_name)
                 return {"status": "ok", "scene": scene_name}
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
-        @app.post("/api/scene/stop")
-        def stop_scene():
-            self._disable_dynamic_modes()
-            return {"status": "ok", "message": "Efeitos parados."}
+        @app.api_route("/api/scene/stop", methods=["GET", "POST"])
+        async def stop_scene(request: Request):
+            data = await parse_request_data(request)
+            restore = str(data.get("restore", "true")).lower() in ("true", "1", "yes")
+            self._disable_dynamic_modes(restore_white=restore)
+            return {
+                "status": "ok",
+                "message": "Efeitos finalizados instantaneamente.",
+                "restored_white": restore
+            }
 
-    def _disable_dynamic_modes(self):
+    def _disable_dynamic_modes(self, restore_white: bool = False):
         if self.ambilight.is_running():
-            self.ambilight.stop()
+            self.ambilight.stop(restore_white=False)
         if self.scenes.current_scene:
-            self.scenes.stop_active_scene()
+            self.scenes.stop_active_scene(restore_white=False)
+            
+        self.controller.clear_queue()
+        
+        if restore_white:
+            self.controller.restore_normal_white()
 
     def start(self):
         server_config = uvicorn.Config(
@@ -1013,16 +934,31 @@ class APIServer:
             access_log=False
         )
         server = uvicorn.Server(server_config)
-        self._server_thread = threading.Thread(target=server.run, daemon=True, name="UvicornWorker")
+
+        self._server_thread = threading.Thread(
+            target=server.run,
+            daemon=True,
+            name="UvicornWorker"
+        )
         self._server_thread.start()
-        logger.info(f"API REST operacional e Painel Web disponivel em http://{self.host}:{self.port}")
-`
+        logger.info(f"API REST operacional em http://{self.host}:{self.port}")
+`,
+  },
+  {
+    path: 'ui/__init__.py',
+    name: '__init__.py',
+    category: 'ui',
+    description: 'Inicializador dos componentes de interface',
+    content: `"""
+UI package for Avant Neo 50W IoT automation.
+"""
+`,
   },
   {
     path: 'ui/tray.py',
     name: 'tray.py',
     category: 'ui',
-    description: 'Interface de bandeja no Windows 11 com atalho para abrir painel no navegador',
+    description: 'Bandeja do Windows 11 em pystray com ícone dinâmico e menu de restauração',
     content: `import pystray
 from PIL import Image, ImageDraw
 import logging
@@ -1077,6 +1013,7 @@ class SystemTrayApp:
         return pystray.Menu(
             pystray.MenuItem("Abrir Cockpit no Navegador", self._open_web_dashboard, default=True),
             pystray.MenuItem("Ligar / Desligar Lâmpada", lambda: self.on_toggle_power()),
+            pystray.MenuItem("Restaurar ao Normal (4000K, 100%)", lambda: self.on_set_reading()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Efeitos & Dinâmicas", pystray.Menu(
                 pystray.MenuItem("Ambilight (Sincronizar Tela)", lambda: self.on_start_ambilight()),
@@ -1106,28 +1043,149 @@ class SystemTrayApp:
 
     def stop(self):
         self.icon.stop()
-`
+`,
+  },
+  {
+    path: 'main.py',
+    name: 'main.py',
+    category: 'core',
+    description: 'Ponto de entrada orquestrador para Windows 11',
+    content: `import sys
+import logging
+from core.config import load_config
+from core.controller import BulbController
+from core.scenes import SceneEngine
+from core.hotkeys import GlobalHotkeys
+from modules.screen_sync import ScreenSyncEngine
+from modules.api_server import APIServer
+from ui.tray import SystemTrayApp
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("MainApp")
+
+def main():
+    logger.info("==================================================")
+    logger.info("Avant Neo 50W IoT Automation Suite (Windows 11)")
+    logger.info("Protocolo: Tuya 3.5 | Porta: 6668 | API: 21420")
+    logger.info("==================================================")
+
+    config = load_config()
+
+    controller = BulbController(config)
+    scenes = SceneEngine(controller)
+    ambilight = ScreenSyncEngine(controller, config.screen_sync)
+
+    def stop_active_workers(restore_white: bool = False):
+        if ambilight.is_running():
+            ambilight.stop(restore_white=restore_white)
+        if scenes.current_scene:
+            scenes.stop_active_scene(restore_white=restore_white)
+        controller.clear_queue()
+
+    def handle_toggle():
+        stop_active_workers(restore_white=False)
+        controller.toggle()
+        tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
+        logger.info(f"Power toggle -> {'Ligada' if controller.state.is_on else 'Desligada'}")
+
+    def handle_reading_mode():
+        stop_active_workers(restore_white=False)
+        controller.restore_normal_white()
+        tray_app.update_icon_color(True, (255, 235, 200))
+        logger.info("Modo de leitura ativado: 4000K 100%")
+
+    def handle_start_scene(scene_name: str):
+        stop_active_workers(restore_white=False)
+        scenes.start_scene(scene_name)
+        logger.info(f"Cena iniciada: {scene_name}")
+
+    def handle_start_ambilight():
+        stop_active_workers(restore_white=False)
+        ambilight.start()
+        logger.info("Ambilight ativado via interface de bandeja")
+
+    def handle_brightness_change(brightness: int, temp: int | None):
+        stop_active_workers(restore_white=False)
+        current_temp = controller.state.color_temp if temp is None else temp
+        controller.set_white(brightness=brightness, color_temp=current_temp)
+        logger.info(f"Brilho ajustado para {brightness}%, Temp: {current_temp}%")
+
+    def handle_quit():
+        logger.info("Encerrando aplicação e liberando recursos...")
+        stop_active_workers(restore_white=False)
+        hotkeys.stop()
+        controller.close()
+        tray_app.stop()
+        sys.exit(0)
+
+    api_server = APIServer(
+        host=config.server.host,
+        port=config.server.port,
+        controller=controller,
+        scenes=scenes,
+        ambilight=ambilight
+    )
+    api_server.start()
+
+    tray_app = SystemTrayApp(
+        on_toggle_power=handle_toggle,
+        on_set_reading=handle_reading_mode,
+        on_start_scene=handle_start_scene,
+        on_start_ambilight=handle_start_ambilight,
+        on_brightness_change=handle_brightness_change,
+        on_quit=handle_quit
+    )
+
+    tray_app.update_icon_color(controller.state.is_on, controller.state.rgb)
+
+    hotkeys = GlobalHotkeys()
+    hotkeys.register(config.hotkeys.get("toggle_power", "ctrl+alt+l"), handle_toggle)
+    hotkeys.register(config.hotkeys.get("mode_reading", "ctrl+shift+r"), handle_reading_mode)
+    hotkeys.register(config.hotkeys.get("mode_ambilight", "ctrl+alt+a"), handle_start_ambilight)
+    hotkeys.register(
+        config.hotkeys.get("brightness_up", "ctrl+alt+up"),
+        lambda: handle_brightness_change(min(100, controller.state.brightness + 15), None)
+    )
+    hotkeys.register(
+        config.hotkeys.get("brightness_down", "ctrl+alt+down"),
+        lambda: handle_brightness_change(max(10, controller.state.brightness - 15), None)
+    )
+    hotkeys.start()
+
+    logger.info("Sistema operacional. Alocando thread principal para a interface do Windows.")
+
+    try:
+        tray_app.run()
+    except KeyboardInterrupt:
+        handle_quit()
+
+if __name__ == "__main__":
+    main()
+`,
   },
   {
     path: 'start_background.vbs',
     name: 'start_background.vbs',
     category: 'scripts',
-    description: 'Launcher silencioso VBScript para Windows 11 sem janela de console',
-    content: `Set WshShell = CreateObject("WScript.Shell")
-Set fso = CreateObject("Scripting.FileSystemObject")
-
-strScriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-WshShell.CurrentDirectory = strScriptDir
-
-' Executa usando pythonw (Python Windowless) sem foco e sem janela (0)
-WshShell.Run "pythonw main.py", 0, False
-`
+    description: 'Launcher silencioso VBScript para inicializar sem janela de terminal no Windows 11',
+    content: `' ==============================================================================
+' Inicializador Silencioso em Background para Windows 11
+' Executa main.py via pythonw.exe sem abrir nenhuma janela de prompt/console
+' ==============================================================================
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "pythonw.exe main.py", 0, False
+Set WshShell = Nothing
+`,
   },
   {
     path: 'install_startup.bat',
     name: 'install_startup.bat',
     category: 'scripts',
-    description: 'Configurador automático de inicialização com o Windows 11',
+    description: 'Script para adicionar o launcher à pasta Inicializar (Startup) do Windows',
     content: `@echo off
 title Configurar Inicializacao Automatica no Windows 11 - Avant Neo 50W IoT
 echo ==============================================================================
@@ -1135,32 +1193,35 @@ echo Adicionando Avant Neo 50W IoT Engine a pasta Inicializar (Startup) do Windo
 echo ==============================================================================
 echo.
 
-set SCRIPT_DIR=%~dp0
-set TARGET_VBS=%SCRIPT_DIR%start_background.vbs
-set STARTUP_FOLDER=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup
-set SHORTCUT_PATH=%STARTUP_FOLDER%\\AvantNeoBulb.lnk
+set TARGET_VBS=%~dp0start_background.vbs
+set STARTUP_DIR=%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup
+set SHORTCUT_PATH=%STARTUP_DIR%\\AvantNeo50W_IoT.vbs
 
-powershell -Command "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT_PATH%');$s.TargetPath='wscript.exe';$s.Arguments='\"%TARGET_VBS%\"';$s.WorkingDirectory='%SCRIPT_DIR%';$s.Description='Avant Neo 50W IoT Background Controller';$s.Save()"
+if not exist "%TARGET_VBS%" (
+    echo [ERRO] O arquivo start_background.vbs nao foi encontrado neste diretorio!
+    pause
+    exit /b 1
+)
 
-if %ERRORLEVEL% EQU 0 (
-    echo [SUCESSO] Atalho criado com sucesso em:
-    echo %SHORTCUT_PATH%
-    echo.
-    echo O aplicativo agora iniciara automaticamente de forma silenciosa sempre
-    echo que voce fizer login no Windows 11!
+copy /y "%TARGET_VBS%" "%SHORTCUT_PATH%" >nul
+
+if %errorlevel% equ 0 (
+    echo [SUCESSO] Inicializacao configurada com sucesso!
+    echo O controlador agora sera executado silenciosamente em background ao ligar o PC.
+    echo Local: %SHORTCUT_PATH%
 ) else (
-    echo [ERRO] Falha ao criar o atalho de inicializacao.
+    echo [ERRO] Falha ao copiar o script para a pasta Startup.
 )
 
 echo.
 pause
-`
+`,
   },
   {
     path: 'test_api.bat',
     name: 'test_api.bat',
     category: 'scripts',
-    description: 'Script de teste rápido dos endpoints cURL da API REST local (corrigido para Windows CMD)',
+    description: 'Script para testar endpoints da API local na porta 21420',
     content: `@echo off
 title Teste Rapido da API REST Local - Avant Neo 50W (Porta 21420)
 echo ==============================================================================
@@ -1179,92 +1240,55 @@ echo.
 echo.
 
 echo 3. Definindo Cor Cyberpunk Neon (Ciano 0, 255, 255):
-echo {"r":0,"g":255,"b":255} | curl -s -X POST http://127.0.0.1:21420/api/color/rgb -H "Content-Type: application/json" -d @-
+curl -s -X POST "http://127.0.0.1:21420/api/color/rgb?r=0&g=255&b=255"
 echo.
 echo.
 
 echo 4. Definindo Branco Modo Leitura (Brilho 100%%, Temperatura 50%%):
-echo {"brightness":100,"color_temp":50} | curl -s -X POST http://127.0.0.1:21420/api/color/white -H "Content-Type: application/json" -d @-
+curl -s -X POST "http://127.0.0.1:21420/api/color/white?brightness=100&color_temp=50"
 echo.
 echo.
 
-echo 5. Iniciando Modo Ambilight:
-echo {"scene":"ambilight"} | curl -s -X POST http://127.0.0.1:21420/api/scene/start -H "Content-Type: application/json" -d @-
+echo 5. Testando Inicio de Efeito (Cyberpunk Pulse):
+curl -s -X POST "http://127.0.0.1:21420/api/scene/start?scene=cyberpunk"
 echo.
 echo.
 
-echo 6. Testando se o Site Web Cockpit esta respondendo:
+echo 6. Testando Parada Imediata e Restauracao ao Normal:
+curl -s -X POST "http://127.0.0.1:21420/api/scene/stop?restore=true"
+echo.
+echo.
+
+echo 7. Testando se o Cockpit Web esta respondendo:
 curl -s -I http://127.0.0.1:21420 | findstr "200"
 echo.
-echo [SUCESSO] Voce pode abrir http://127.0.0.1:21420 no seu navegador!
+echo ==============================================================================
+echo [SUCESSO] Todos os endpoints responderam com exito!
+echo Voce pode abrir http://127.0.0.1:21420 no seu navegador para o Cockpit completo.
+echo ==============================================================================
 echo.
 
 pause
-`
-  },
-  {
-    path: 'test_api.ps1',
-    name: 'test_api.ps1',
-    category: 'scripts',
-    description: 'Script PowerShell nativo para testar os endpoints da API REST',
-    content: `# ==============================================================================
-# Teste de API REST Local - Avant Neo 50W IoT (PowerShell)
-# Executa chamadas nativas sem dependencia de curl ou problemas de aspas
-# ==============================================================================
-
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "Testando API REST Local (http://127.0.0.1:21420)..." -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
-
-Write-Host ""
-Write-Host "1. Status Geral:" -ForegroundColor Yellow
-$status = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/status" -Method Get
-$status | Format-List
-
-Write-Host "2. Alternando Alimentacao (Toggle):" -ForegroundColor Yellow
-$toggle = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/power/toggle" -Method Post
-$toggle | Format-List
-
-Write-Host "3. Definindo Cor Cyberpunk Neon (Ciano):" -ForegroundColor Yellow
-$rgbBody = @{ r = 0; g = 255; b = 255 } | ConvertTo-Json
-$rgb = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/color/rgb" -Method Post -ContentType "application/json" -Body $rgbBody
-$rgb | Format-List
-
-Write-Host "4. Definindo Branco Modo Leitura:" -ForegroundColor Yellow
-$whiteBody = @{ brightness = 100; color_temp = 50 } | ConvertTo-Json
-$white = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/color/white" -Method Post -ContentType "application/json" -Body $whiteBody
-$white | Format-List
-
-Write-Host "5. Iniciando Modo Ambilight:" -ForegroundColor Yellow
-$sceneBody = @{ scene = "ambilight" } | ConvertTo-Json
-$scene = Invoke-RestMethod -Uri "http://127.0.0.1:21420/api/scene/start" -Method Post -ContentType "application/json" -Body $sceneBody
-$scene | Format-List
-
-Write-Host ""
-Write-Host "[SUCESSO] Todos os testes foram executados com sucesso!" -ForegroundColor Green
-Write-Host "Abrindo Painel Web no navegador: http://127.0.0.1:21420 ..." -ForegroundColor Cyan
-Start-Process "http://127.0.0.1:21420"
-`
+`,
   },
   {
     path: 'README.md',
     name: 'README.md',
     category: 'docs',
-    description: 'Manual completo de instalação, atalhos e protocolo Tuya 3.5',
+    description: 'Documentação completa de arquitetura, parâmetros de rede e instruções',
     content: `# Avant Neo 50W RGB/CCT IoT Automation Suite (Windows 11)
 
-Software modular de baixa latência em Python 3.10+ para controle de alta performance da lâmpada inteligente Avant Neo 50W (base Tuya 3.5), executando em segundo plano na bandeja do sistema do Windows 11 com suporte a sincronização de tela Ambilight, efeitos dinâmicos, atalhos globais Win32, Painel Web local em http://127.0.0.1:21420 e API REST.
+Software modular de baixa latência em Python 3.10+ para controle de alta performance da lâmpada inteligente Avant Neo 50W (base Tuya 3.5), executando em segundo plano na bandeja do sistema do Windows 11 com suporte a sincronização de tela Ambilight, efeitos dinâmicos, atalhos globais Win32 e API REST local.
 
 ---
 
 ## 1. Características Técnicas
 
-- **Painel Web Local Integrado:** Acesse http://127.0.0.1:21420 no navegador para controlar o brilho, temperatura CCT, cores RGB e cenas dinâmicas.
-- **Driver Desacoplado:** Fila de comandos \`queue.Queue\` em thread dedicada. Chamadas de rede TCP da \`tinytuya\` nunca travam a UI, Ambilight ou atalhos.
-- **Protocolo Tuya 3.5 Validado:** Comunicação direta na porta TCP \`6668\` usando \`socketPersistent(False)\` e timeout de 2.0s para evitar travamentos de socket.
-- **Ambilight de Baixa Latência:** Captura do display primário via \`mss\` (C-native) com saturação reforçada no espaço HSV e interpolação linear (LERP) a 20 FPS.
-- **Atalhos Globais Win32:** Registro via \`ctypes.windll.user32.RegisterHotKey\` com fallback inteligente caso outro software (ex: AMD Radeon/NVIDIA) reserve uma combinação.
-- **Bandeja do Windows:** Ícone dinâmico em \`pystray\` com opção para abrir o painel web no navegador.
+- **Driver Desacoplado:** Fila de comandos prioritários e slot Latest-Value Sampling para streaming, com pacing seguro de 5 Hz para não sobrecarregar a controladora Wi-Fi da lâmpada.
+- **Protocolo Tuya 3.5 Validado:** Comunicação direta na porta TCP \`6668\` com tratamento de timeout e auto-recuperação assíncrona.
+- **Ambilight de Baixa Latência:** Captura do display primário via \`mss\` com saturação reforçada e LERP suave.
+- **Atalhos Globais Win32:** Registro via \`RegisterHotKey\` com resolução automática de colisões.
+- **API REST Local e Cockpit Web:** Servidor FastAPI em \`http://127.0.0.1:21420\` servindo o painel completo.
 
 ---
 
@@ -1272,14 +1296,8 @@ Software modular de baixa latência em Python 3.10+ para controle de alta perfor
 
 \`\`\`powershell
 pip install -r requirements.txt
+python main.py
 \`\`\`
-
-## 3. Execução
-
-- **Em Primeiro Plano (Debug):** \`python main.py\`
-- **Silencioso em Background:** Dê duplo clique em \`start_background.vbs\` ou rode \`pythonw main.py\`
-- **Auto-Inicialização no Windows 11:** Execute \`install_startup.bat\`
-- **Acessar Painel Web:** Abra http://127.0.0.1:21420 ou clique em "Abrir Cockpit no Navegador" no ícone da bandeja.
-`
-  }
+`,
+  },
 ];

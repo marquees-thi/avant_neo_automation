@@ -1,31 +1,55 @@
+import os
+import json
 import logging
 import threading
-import json
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional
 from core.controller import BulbController
 from core.scenes import SceneEngine
 from modules.screen_sync import ScreenSyncEngine
 
 logger = logging.getLogger("APIServer")
 
-app = FastAPI(title="Avant Neo 50W IoT Engine", version="1.0.0")
+app = FastAPI(title="Avant Neo 50W IoT Engine", version="1.1.0")
 
-class ColorRGBRequest(BaseModel):
-    r: int = Field(..., ge=0, le=255)
-    g: int = Field(..., ge=0, le=255)
-    b: int = Field(..., ge=0, le=255)
+# Habilita CORS irrestrito para conexões locais e navegadores
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class WhiteRequest(BaseModel):
-    brightness: int = Field(..., ge=0, le=100)
-    color_temp: int = Field(..., ge=0, le=100)
+async def parse_request_data(request: Request) -> dict:
+    """Extrai dados tanto de Query Parameters quanto de JSON body ou Form-Data."""
+    data = dict(request.query_params)
+    
+    # Se houver body
+    try:
+        body_bytes = await request.body()
+        if body_bytes:
+            text = body_bytes.decode("utf-8", errors="replace").strip()
+            if text.startswith("{") and text.endswith("}"):
+                json_data = json.loads(text)
+                data.update(json_data)
+            elif "=" in text:
+                # Form data simples
+                for part in text.split("&"):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        data[k.strip()] = v.strip()
+    except Exception as e:
+        logger.debug(f"Tentativa de ler body como JSON: {e}")
+        
+    return data
 
-class SceneRequest(BaseModel):
-    scene: str
-
+# Standalone Fallback Cockpit (Caso a pasta dist/web não esteja compilada)
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -55,7 +79,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     @media(min-width: 768px) { .grid { grid-template-columns: 320px 1fr; } }
     .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
     .visualizer { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 260px; position: relative; overflow: hidden; border-radius: 10px; background: #0c0c0c; border: 1px solid #1f1f1f; }
-    .bulb-glow { width: 120px; height: 120px; border-radius: 50%; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 0 40px rgba(255,255,255,0.2); border: 2px solid #333; }
+    .bulb-glow { width: 120px; height: 120px; border-radius: 50%; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 0 40px rgba(255,255,255,0.2); border: 2px solid #333; }
     .bulb-base { width: 44px; height: 26px; background: #2a2a2a; border-radius: 0 0 6px 6px; border: 1px solid #3a3a3a; margin-top: -6px; z-index: 2; }
     .bulb-thread { width: 28px; height: 14px; background: #1f1f1f; border-radius: 0 0 4px 4px; border: 1px solid #333; }
     .slider-group { display: flex; flex-direction: column; gap: 6px; }
@@ -75,13 +99,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .btn-scene:hover { border-color: var(--accent); color: #fff; }
     .btn-scene.active { background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; color: #fbbf24; }
     .status-bar { font-family: monospace; font-size: 0.75rem; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+    .btn-restore { background: #064e3b; border: 1px solid #059669; color: #6ee7b7; padding: 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; width: 100%; transition: all 0.15s; }
+    .btn-restore:hover { background: #047857; color: #fff; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div class="title-group">
-        <span class="brand">Avant Neo 50W</span>
+        <span class="brand">Avant Neo 50W IoT</span>
         <span class="badge">Tuya 3.5 :6668</span>
       </div>
       <button id="pwrBtn" class="btn-power" onclick="togglePower()">Carregando...</button>
@@ -156,9 +182,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           </div>
         </div>
 
-        <div style="margin-top: auto;">
-          <button class="btn-preset" style="width: 100%; padding: 10px;" onclick="stopScenes()">
-            Pausar Todos os Efeitos Dinâmicos
+        <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px;">
+          <button class="btn-restore" onclick="restoreNormal()">
+            Restaurar Imediatamente ao Normal (4000K, 100%)
+          </button>
+          <button class="btn-preset" onclick="stopScenes()">
+            Pausar Todos os Efeitos
           </button>
         </div>
       </div>
@@ -212,7 +241,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('lblLux').innerText = s.brightness + '%';
       document.getElementById('lblTemp').innerText = s.color_temp + '%';
 
-      // Update scene buttons
       ['ambilight', 'circadian', 'candle', 'cyberpunk'].forEach(sc => {
         const btn = document.getElementById('btn' + sc.charAt(0).toUpperCase() + sc.slice(1));
         if (btn) {
@@ -233,11 +261,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     async function sendWhite() {
       const b = parseInt(document.getElementById('rngBrightness').value);
       const t = parseInt(document.getElementById('rngTemp').value);
-      await fetch('/api/color/white', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brightness: b, color_temp: t })
-      });
+      await fetch('/api/color/white?brightness=' + b + '&color_temp=' + t, { method: 'POST' });
       fetchStatus();
     }
 
@@ -248,68 +272,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     async function sendRgb(r, g, b) {
-      await fetch('/api/color/rgb', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ r: r, g: g, b: b })
-      });
+      await fetch('/api/color/rgb?r=' + r + '&g=' + g + '&b=' + b, { method: 'POST' });
       fetchStatus();
     }
 
     async function toggleScene(name) {
       if (currentState && (currentState.active_scene === name || (name === 'ambilight' && currentState.ambilight_running))) {
-        await stopScenes();
+        await restoreNormal();
       } else {
-        await fetch('/api/scene/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scene: name })
-        });
+        await fetch('/api/scene/start?scene=' + name, { method: 'POST' });
       }
       fetchStatus();
     }
 
     async function stopScenes() {
-      await fetch('/api/scene/stop', { method: 'POST' });
+      await fetch('/api/scene/stop?restore=false', { method: 'POST' });
+      fetchStatus();
+    }
+
+    async function restoreNormal() {
+      await fetch('/api/scene/stop?restore=true', { method: 'POST' });
       fetchStatus();
     }
 
     fetchStatus();
-    setInterval(fetchStatus, 1500);
+    setInterval(fetchStatus, 1000);
   </script>
 </body>
 </html>
 """
 
-async def parse_flexible_json(request: Request) -> dict:
-    """
-    Parser tolerante a falhas que trata formatos de entrada do Windows CMD,
-    aspas escapadas e tipos de conteudo diversos.
-    """
-    body_bytes = await request.body()
-    if not body_bytes:
-        return {}
-    
-    text = body_bytes.decode("utf-8", errors="replace").strip()
-    
-    # Se o CMD enviou aspas escapadas como {\"r\": 0}, remove a barra invertida antes das aspas
-    if '\\"' in text:
-        text = text.replace('\\"', '"')
-
-    try:
-        return json.loads(text)
-    except Exception as e:
-        logger.warning(f"Erro ao decodificar JSON bruto: {e}, payload recebido: {text}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Formato JSON invalido. Certifique-se de usar aspas duplas: {text}"
-        )
-
 class APIServer:
-    """
-    Servidor HTTP REST e Painel Web para a workstation.
-    Serve a API em /api/* e o Cockpit Web em /.
-    """
     def __init__(
         self,
         host: str,
@@ -328,14 +321,35 @@ class APIServer:
         self._setup_routes()
 
     def _setup_routes(self):
-        @app.get("/", response_class=HTMLResponse)
-        def serve_dashboard():
-            return HTMLResponse(content=DASHBOARD_HTML)
+        # Verifica se há frontend compilado no diretório web/ ou dist/
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        dist_dir = os.path.join(base_dir, "web")
+        if not os.path.exists(dist_dir):
+            dist_dir = os.path.join(base_dir, "..", "dist")
+
+        has_dist = os.path.exists(dist_dir) and os.path.exists(os.path.join(dist_dir, "index.html"))
+
+        if has_dist:
+            logger.info(f"Frontend Cockpit completo detectado em: {dist_dir}")
+            # Monta assets estáticos se existirem
+            assets_dir = os.path.join(dist_dir, "assets")
+            if os.path.exists(assets_dir):
+                app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+            @app.get("/", response_class=HTMLResponse)
+            def serve_built_app():
+                with open(os.path.join(dist_dir, "index.html"), "r", encoding="utf-8") as f:
+                    return HTMLResponse(content=f.read())
+        else:
+            @app.get("/", response_class=HTMLResponse)
+            def serve_dashboard():
+                return HTMLResponse(content=DASHBOARD_HTML)
 
         @app.get("/dashboard", response_class=HTMLResponse)
         def serve_dashboard_alias():
             return HTMLResponse(content=DASHBOARD_HTML)
 
+        # --- Status Endpoint ---
         @app.get("/api/status")
         def get_status():
             return {
@@ -348,66 +362,100 @@ class APIServer:
                 "ambilight_running": self.ambilight.is_running()
             }
 
-        @app.post("/api/power/toggle")
+        # --- Power Toggle (Suporta POST e GET) ---
+        @app.api_route("/api/power/toggle", methods=["GET", "POST"])
         def toggle_power():
-            self._disable_dynamic_modes()
+            self._disable_dynamic_modes(restore_white=False)
             self.controller.toggle()
             return {"status": "ok", "power": self.controller.state.is_on}
 
-        @app.post("/api/color/rgb")
+        # --- Color RGB (Suporta POST e GET com JSON, Query Params ou Form) ---
+        @app.api_route("/api/color/rgb", methods=["GET", "POST"])
         async def set_rgb(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "r" not in data or "g" not in data or "b" not in data:
-                raise HTTPException(status_code=400, detail="Campos r, g, b obrigatorios (0 a 255)")
+                raise HTTPException(status_code=400, detail="Campos r, g, b obrigatórios (0 a 255)")
             
-            r = int(data["r"])
-            g = int(data["g"])
-            b = int(data["b"])
-            self._disable_dynamic_modes()
-            self.controller.set_rgb(r, g, b)
-            return {"status": "ok", "rgb": [r, g, b]}
+            try:
+                r = int(float(data["r"]))
+                g = int(float(data["g"]))
+                b = int(float(data["b"]))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Valores de r, g, b devem ser inteiros")
 
-        @app.post("/api/color/white")
+            is_stream = str(data.get("stream", "false")).lower() in ("true", "1", "yes")
+
+            if not is_stream:
+                self._disable_dynamic_modes(restore_white=False)
+                self.controller.set_rgb(r, g, b, stream_mode=False)
+            else:
+                self.controller.set_rgb(r, g, b, stream_mode=True)
+
+            return {"status": "ok", "rgb": [r, g, b], "stream": is_stream}
+
+        # --- Color White (CCT) (Suporta POST e GET) ---
+        @app.api_route("/api/color/white", methods=["GET", "POST"])
         async def set_white(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "brightness" not in data or "color_temp" not in data:
-                raise HTTPException(status_code=400, detail="Campos brightness e color_temp obrigatorios (0 a 100)")
+                raise HTTPException(status_code=400, detail="Campos brightness e color_temp obrigatórios (0 a 100)")
             
-            brightness = int(data["brightness"])
-            color_temp = int(data["color_temp"])
-            self._disable_dynamic_modes()
+            try:
+                brightness = int(float(data["brightness"]))
+                color_temp = int(float(data["color_temp"]))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Valores de brightness e color_temp devem ser inteiros")
+
+            self._disable_dynamic_modes(restore_white=False)
             self.controller.set_white(brightness, color_temp)
             return {"status": "ok", "brightness": brightness, "color_temp": color_temp}
 
-        @app.post("/api/scene/start")
+        # --- Scenes Start (Suporta POST e GET) ---
+        @app.api_route("/api/scene/start", methods=["GET", "POST"])
         async def start_scene(request: Request):
-            data = await parse_flexible_json(request)
+            data = await parse_request_data(request)
             if "scene" not in data:
-                raise HTTPException(status_code=400, detail="Campo 'scene' obrigatorio")
+                raise HTTPException(status_code=400, detail="Campo 'scene' obrigatório")
             
-            scene_name = str(data["scene"]).lower()
+            scene_name = str(data["scene"]).lower().strip()
             if scene_name == "ambilight":
-                self.scenes.stop_active_scene()
+                self.scenes.stop_active_scene(restore_white=False)
+                self.controller.clear_queue()
                 self.ambilight.start()
                 return {"status": "ok", "mode": "ambilight"}
             
             try:
-                self.ambilight.stop()
+                self.ambilight.stop(restore_white=False)
+                self.controller.clear_queue()
                 self.scenes.start_scene(scene_name)
                 return {"status": "ok", "scene": scene_name}
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
-        @app.post("/api/scene/stop")
-        def stop_scene():
-            self._disable_dynamic_modes()
-            return {"status": "ok", "message": "Efeitos e Ambilight pausados."}
+        # --- Scenes Stop (Suporta POST e GET, com restauração opcional instantânea) ---
+        @app.api_route("/api/scene/stop", methods=["GET", "POST"])
+        async def stop_scene(request: Request):
+            data = await parse_request_data(request)
+            # Por padrão restore=True para a lâmpada voltar imediatamente a um estado limpo de trabalho
+            restore = str(data.get("restore", "true")).lower() in ("true", "1", "yes")
+            self._disable_dynamic_modes(restore_white=restore)
+            return {
+                "status": "ok",
+                "message": "Efeitos finalizados instantaneamente.",
+                "restored_white": restore
+            }
 
-    def _disable_dynamic_modes(self):
+    def _disable_dynamic_modes(self, restore_white: bool = False):
+        """Pausa qualquer efeito ativo e limpa a fila para resposta imediata do socket."""
         if self.ambilight.is_running():
-            self.ambilight.stop()
+            self.ambilight.stop(restore_white=False)
         if self.scenes.current_scene:
-            self.scenes.stop_active_scene()
+            self.scenes.stop_active_scene(restore_white=False)
+            
+        self.controller.clear_queue()
+        
+        if restore_white:
+            self.controller.restore_normal_white()
 
     def start(self):
         server_config = uvicorn.Config(
@@ -425,4 +473,4 @@ class APIServer:
             name="UvicornWorker"
         )
         self._server_thread.start()
-        logger.info(f"API REST operacional e Painel Web disponivel em http://{self.host}:{self.port}")
+        logger.info(f"API REST operacional e Painel Web disponível em http://{self.host}:{self.port}")

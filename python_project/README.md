@@ -60,7 +60,7 @@ Ele criará o atalho necessário em `shell:startup`.
 ## 4. Teclas de Atalho Padrão (Customizáveis em `config.yaml`)
 
 - `Ctrl + Alt + L`: Ligar / Desligar Lâmpada (Toggle Power)
-- `Ctrl + Alt + R`: Modo Leitura (4000K Neutro, 100% Brilho)
+- `Ctrl + Shift + R`: Modo Leitura (4000K Neutro, 100% Brilho)
 - `Ctrl + Alt + A`: Iniciar Ambilight (Sincronização de Tela)
 - `Ctrl + Alt + Up`: Aumentar Brilho (+15%)
 - `Ctrl + Alt + Down`: Diminuir Brilho (-15%)
@@ -69,11 +69,11 @@ Ele criará o atalho necessário em `shell:startup`.
 
 ## 5. Endpoints da API REST Local (Porta 21420)
 
-| Método | Endpoint | Descrição | Exemplo de Payload |
+| Método | Endpoint | Descrição | Exemplo de Uso |
 |---|---|---|---|
-| `GET` | `/api/status` | Retorna o status completo da lâmpada e efeitos ativos | - |
-| `POST` | `/api/power/toggle` | Alterna entre ligado e desligado | - |
-| `POST` | `/api/color/rgb` | Define cor RGB (0-255) | `{"r": 0, "g": 255, "b": 255}` |
-| `POST` | `/api/color/white` | Define modo branco (0-100% brilho, 0-100% temp) | `{"brightness": 100, "color_temp": 50}` |
-| `POST` | `/api/scene/start` | Inicia cena (`cyberpunk`, `candle`, `circadian`, `ambilight`) | `{"scene": "cyberpunk"}` |
-| `POST` | `/api/scene/stop` | Interrompe efeitos dinâmicos | - |
+| `GET` | `/api/status` | Retorna o status da lâmpada, cena ativa e Ambilight | `/api/status` |
+| `POST / GET` | `/api/power/toggle` | Alterna entre ligada e desligada | `/api/power/toggle` |
+| `POST / GET` | `/api/color/rgb` | Define cor RGB (suporta JSON ou query params) | `/api/color/rgb?r=0&g=255&b=255` |
+| `POST / GET` | `/api/color/white` | Define modo branco (brilho 1-100%, temp 0-100%) | `/api/color/white?brightness=100&color_temp=50` |
+| `POST / GET` | `/api/scene/start` | Inicia cena (`cyberpunk`, `candle`, `circadian`, `ambilight`) | `/api/scene/start?scene=cyberpunk` |
+| `POST / GET` | `/api/scene/stop` | Interrompe efeitos instantaneamente e restaura ao normal | `/api/scene/stop?restore=true` |

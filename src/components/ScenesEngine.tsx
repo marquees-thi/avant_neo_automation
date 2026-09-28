@@ -54,15 +54,26 @@ export const ScenesEngine: React.FC<ScenesEngineProps> = ({
           </p>
         </div>
 
-        {state.activeScene && (
+        <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
-            onClick={onStopScene}
-            className="px-3.5 py-1.5 text-xs font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg hover:bg-rose-500/20 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
+            onClick={() => onSetWhite(100, 50)}
+            className="px-3.5 py-1.5 text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
+            title="Para qualquer efeito e restaura luz branca ideal para trabalho"
           >
-            <Square className="w-3.5 h-3.5 fill-rose-400" />
-            <span>Parar Cena ({state.activeScene})</span>
+            <Sun className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Restaurar ao Normal (4000K)</span>
           </button>
-        )}
+
+          {state.activeScene && (
+            <button
+              onClick={onStopScene}
+              className="px-3.5 py-1.5 text-xs font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg hover:bg-rose-500/20 transition-colors flex items-center gap-1.5"
+            >
+              <Square className="w-3.5 h-3.5 fill-rose-400" />
+              <span>Parar Cena ({state.activeScene})</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

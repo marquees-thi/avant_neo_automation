@@ -1,4 +1,5 @@
 import time
+import math
 import logging
 import threading
 from typing import Tuple, Optional
@@ -11,8 +12,9 @@ logger = logging.getLogger("AmbilightEngine")
 
 class ScreenSyncEngine:
     """
-    Engine de Ambilight com captura em alta taxa (mss) no display primario,
-    filtro de reforco de saturacao e interpolacao linear (LERP) para suavidade.
+    Engine de Ambilight de alta fidelidade com captura via mss no display primário,
+    reforço inteligente de saturação, interpolação linear (LERP) e delta-thresholding
+    para evitar sobrecarga de pacotes na lâmpada Wi-Fi.
     """
     def __init__(self, controller: BulbController, config: ScreenSyncConfig):
         self.controller = controller
@@ -20,6 +22,8 @@ class ScreenSyncEngine:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._current_rgb: Tuple[float, float, float] = (255.0, 255.0, 255.0)
+        self._last_dispatched_rgb: Tuple[int, int, int] = (0, 0, 0)
+        self._last_dispatch_time = 0.0
 
     def is_running(self) -> bool:
         return self._running
@@ -32,14 +36,14 @@ class ScreenSyncEngine:
         self._thread.start()
         logger.info("Motor Ambilight iniciado com sucesso.")
 
-    def stop(self):
+    def stop(self, restore_white: bool = False):
         self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        logger.info("Motor Ambilight parado.")
+        self.controller.clear_queue()
+        if restore_white:
+            self.controller.restore_normal_white()
+        logger.info("Motor Ambilight parado instantaneamente.")
 
     def _boost_saturation(self, r: int, g: int, b: int, factor: float) -> Tuple[int, int, int]:
-        """Aumenta a saturacao no espaco HSV para cores de tela nao parecerem palidas na lampada."""
         rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
         max_c = max(rf, gf, bf)
         min_c = min(rf, gf, bf)
@@ -50,8 +54,6 @@ class ScreenSyncEngine:
 
         s = delta / max_c
         v = max_c
-
-        # Eleva a saturacao
         s = min(1.0, s * factor)
 
         if delta == 0:
@@ -87,39 +89,58 @@ class ScreenSyncEngine:
         return (int((r1 + m) * 255), int((g1 + m) * 255), int((b1 + m) * 255))
 
     def _capture_loop(self):
-        target_delay = 1.0 / self.config.target_fps
+        # Taxa segura de streaming Wi-Fi (~5 FPS / 200ms)
+        target_interval = 0.20
         lerp_alpha = self.config.smooth_factor
 
-        with mss.mss() as sct:
-            monitor = sct.monitors[1]  # Monitor Primario do Windows
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]  # Monitor Primário do Windows
 
-            while self._running:
-                loop_start = time.perf_counter()
+                while self._running:
+                    loop_start = time.perf_counter()
 
-                # Captura direta e ultra-rapida da memoria de video
-                sct_img = sct.grab(monitor)
-                
-                # Reducao bilateral acelerada para 1x1 pixel via Pillow para media ponderada instantanea
-                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                tiny = img.resize((1, 1), Image.Resampling.BILINEAR)
-                raw_r, raw_g, raw_b = tiny.getpixel((0, 0))
+                    try:
+                        sct_img = sct.grab(monitor)
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        tiny = img.resize((1, 1), Image.Resampling.BILINEAR)
+                        raw_r, raw_g, raw_b = tiny.getpixel((0, 0))
 
-                # Realce de saturacao
-                target_r, target_g, target_b = self._boost_saturation(
-                    raw_r, raw_g, raw_b, self.config.saturation_boost
-                )
+                        target_r, target_g, target_b = self._boost_saturation(
+                            raw_r, raw_g, raw_b, self.config.saturation_boost
+                        )
 
-                # Linear Interpolation (LERP) para evitar cortes secos e aliviar a taxa no microcontrolador
-                cur_r, cur_g, cur_b = self._current_rgb
-                final_r = cur_r + (target_r - cur_r) * lerp_alpha
-                final_g = cur_g + (target_g - cur_g) * lerp_alpha
-                final_b = cur_b + (target_b - cur_b) * lerp_alpha
-                self._current_rgb = (final_r, final_g, final_b)
+                        cur_r, cur_g, cur_b = self._current_rgb
+                        final_r = cur_r + (target_r - cur_r) * lerp_alpha
+                        final_g = cur_g + (target_g - cur_g) * lerp_alpha
+                        final_b = cur_b + (target_b - cur_b) * lerp_alpha
+                        self._current_rgb = (final_r, final_g, final_b)
 
-                # Despacha ao driver da lampada com politica de descarte de frames em congestionamento
-                self.controller.set_rgb(int(final_r), int(final_g), int(final_b), stream_mode=True)
+                        out_r = int(final_r)
+                        out_g = int(final_g)
+                        out_b = int(final_b)
 
-                elapsed = time.perf_counter() - loop_start
-                sleep_time = target_delay - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                        # Delta thresholding: só transmite se a cor mudou significativamente ou a cada 2 segundos
+                        now = time.perf_counter()
+                        delta = math.sqrt(
+                            (out_r - self._last_dispatched_rgb[0]) ** 2 +
+                            (out_g - self._last_dispatched_rgb[1]) ** 2 +
+                            (out_b - self._last_dispatched_rgb[2]) ** 2
+                        )
+
+                        if delta >= 8.0 or (now - self._last_dispatch_time) >= 2.0:
+                            self.controller.set_rgb(out_r, out_g, out_b, stream_mode=True)
+                            self._last_dispatched_rgb = (out_r, out_g, out_b)
+                            self._last_dispatch_time = now
+
+                    except Exception as e:
+                        logger.debug(f"Hiccup transitório na captura Ambilight: {e}")
+
+                    elapsed = time.perf_counter() - loop_start
+                    sleep_time = target_interval - elapsed
+                    if sleep_time > 0 and self._running:
+                        time.sleep(sleep_time)
+
+        except Exception as e:
+            logger.error(f"Erro fatal no loop do Ambilight: {e}")
+            self._running = False
